@@ -20,9 +20,37 @@ app.add_middleware(
 )
 
 RUNS_DIR = Path("runs")
+TEMPLATES_DIR = Path("templates")
 
 class CompileRequest(BaseModel):
     code: str
+
+
+@app.get("/api/templates")
+def get_templates():
+    """Return the available PyTorch template files for the frontend sidebar."""
+    if not TEMPLATES_DIR.exists():
+        return []
+
+    return [
+        {"name": path.name, "path": path.name}
+        for path in sorted(TEMPLATES_DIR.glob("*.py"), key=lambda item: item.name.lower())
+        if path.is_file()
+    ]
+
+
+@app.get("/api/templates/{template_name}")
+def get_template(template_name: str):
+    """Read one Python template without allowing access outside templates/."""
+    if Path(template_name).name != template_name or not template_name.endswith(".py"):
+        raise HTTPException(status_code=400, detail="Invalid template name")
+
+    template_path = (TEMPLATES_DIR / template_name).resolve()
+    templates_root = TEMPLATES_DIR.resolve()
+    if templates_root not in template_path.parents or not template_path.is_file():
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    return {"name": template_path.name, "content": template_path.read_text()}
 
 
 def extract_source_metadata(code: str) -> dict:

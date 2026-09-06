@@ -141,8 +141,10 @@ inputs = (torch.randn(4, 4), torch.randn(4, 4), torch.randn(4))
 export default function App() {
   const [snapshots, setSnapshots] = useState<any[]>([]);
   const [selectedSnapshot, setSelectedSnapshot] = useState<any | null>(null);
+  const [selectedTemplateName, setSelectedTemplateName] = useState<string | null>(null);
   const [codeContent, setCodeContent] = useState<string>('');
   const [pythonCode, setPythonCode] = useState<string>(DEFAULT_TORCH);
+  const [templates, setTemplates] = useState<{ name: string; path: string }[]>([]);
   const [activeTab, setActiveTab] = useState<'mlir' | 'python'>('python');
   const activeTabRef = useRef<'mlir' | 'python'>('python');
 
@@ -215,8 +217,10 @@ export default function App() {
         const items = parsedSnapshots.length > 0 ? parsedSnapshots : [];
         setSnapshots(items);
         if (items.length > 0) {
+          setSelectedTemplateName(null);
           setSelectedSnapshot(items[0]);
         } else {
+          setSelectedTemplateName(null);
           setSelectedSnapshot(null);
           setCodeContent('');
         }
@@ -226,15 +230,43 @@ export default function App() {
           { id: '1', name: 'Wait for Data (no jsonl)', path: '' },
         ];
         setSnapshots(mockSnapshots);
+        setSelectedTemplateName(null);
         setSelectedSnapshot(null);
       }
     }
 
     // Clear stale state while loading new run
     setSelectedSnapshot(null);
+    setSelectedTemplateName(null);
     setCodeContent('');
     loadRunData();
   }, [currentRunId]);
+
+  useEffect(() => {
+    fetch(`${apiBaseUrl}/api/templates`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to load templates');
+        return res.json();
+      })
+      .then((data) => setTemplates(Array.isArray(data) ? data : []))
+      .catch(() => setTemplates([]));
+  }, [apiBaseUrl]);
+
+  const loadTemplate = async (template: { name: string; path: string }) => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/templates/${encodeURIComponent(template.path)}`);
+      if (!res.ok) throw new Error('Failed to load template');
+      const data = await res.json();
+      setPythonCode(data.content || '');
+      setActiveTab('python');
+      activeTabRef.current = 'python';
+      setSelectedTemplateName(template.name);
+      setSelectedSnapshot(null);
+      setCodeContent('');
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   useEffect(() => {
     if (selectedSnapshot && selectedSnapshot.path) {
@@ -695,8 +727,29 @@ export default function App() {
           </h1>
            <p className="text-[13px] text-[var(--muted)] mt-1">Optimization Timeline</p>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
-          {snapshots.length === 0 ? (
+         <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
+           <div className="mb-5">
+             <div className="px-1 pb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+               PyTorch Templates
+             </div>
+             {templates.length === 0 ? (
+               <p className="px-1 text-[12px] italic text-[var(--muted)]">No `.py` templates found</p>
+             ) : (
+               <div className="space-y-1.5">
+                 {templates.map((template) => (
+                   <button
+                     key={template.path}
+                     type="button"
+                     onClick={() => loadTemplate(template)}
+                     className="w-full rounded-lg border border-transparent bg-[var(--surface)] px-3 py-2 text-left text-[13px] font-medium text-[var(--muted-strong)] transition-colors hover:border-[var(--border)] hover:bg-[var(--control-hover)]"
+                   >
+                     <span className="font-mono">{template.name}</span>
+                   </button>
+                 ))}
+               </div>
+             )}
+           </div>
+           {snapshots.length === 0 ? (
              <p className="text-[var(--muted)] text-sm italic">Loading passes...</p>
           ) : (
             snapshots.map((snap, idx) => {
@@ -704,7 +757,7 @@ export default function App() {
               return (
                 <button
                   key={snap.id || idx}
-                  onClick={() => setSelectedSnapshot(snap)}
+                  onClick={() => { setSelectedTemplateName(null); setSelectedSnapshot(snap); }}
                   className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all ${
                     isSelected
                        ? 'bg-[var(--control-active)] border-[var(--border)] shadow-sm'
@@ -728,7 +781,7 @@ export default function App() {
 
       {/* Main Content Area */}
        <div className="flex-1 flex flex-col h-full bg-[var(--surface)]">
-        {selectedSnapshot ? (
+        {selectedSnapshot || selectedTemplateName ? (
            <div className="flex flex-1 h-full overflow-hidden">
             {/* Code Editor */}
             <div className={`${isFullscreen ? 'hidden' : 'flex'} flex-1 flex-col border-r border-[var(--border)] h-full max-w-[50%]`}>
@@ -764,7 +817,7 @@ export default function App() {
                   height="100%"
                   language={activeTab === 'python' ? 'python' : 'llvm'}
                    theme={isDarkMode ? 'vs-dark' : 'light'}
-                  path={activeTab === 'python' ? 'source.py' : (selectedSnapshot?.path || 'trace.mlir')}
+                  path={activeTab === 'python' ? (selectedTemplateName || 'source.py') : (selectedSnapshot?.path || 'trace.mlir')}
                   value={activeTab === 'python' ? pythonCode : codeContent}
                   onChange={(val) => {
                     if (activeTabRef.current === 'python') {
