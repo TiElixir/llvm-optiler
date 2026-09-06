@@ -25,6 +25,26 @@ Paste or select a PyTorch model, compile it through the local Torch-MLIR pipelin
 - **Dark mode and fullscreen graph view** — use the explorer comfortably during debugging or teaching.
 - **FastAPI backend** — expose compilation, run artifacts, MLIR snapshots, and templates through a small local API.
 
+## Sample
+### Code
+```py
+import torch
+import torch.nn as nn
+
+class MyModel(nn.Module):
+    def forward(self, x, w, b):
+        y = torch.matmul(x, w)
+        return torch.relu(y + b)
+
+# You must define 'model' and 'inputs'
+model = MyModel()
+inputs = (torch.randn(4, 4), torch.randn(4, 4), torch.randn(4))
+```
+### Visual
+
+<img width="1252" height="792" alt="image" src="https://github.com/user-attachments/assets/73e44786-d0e2-477e-a63c-fedd2f3224e2" />
+
+
 ## Architecture
 
 ```text
