@@ -17,6 +17,7 @@ runs/
 *.log
 
 # Frontend dependencies and build output
+node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/dist-ssr/

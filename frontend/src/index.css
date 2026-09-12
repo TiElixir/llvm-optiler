@@ -58,6 +58,9 @@
   --graph-trace: #c2410c;
   --graph-trace-ring: rgba(249, 115, 22, 0.22);
   --graph-trace-shadow: rgba(194, 65, 12, 0.28);
+  --graph-select: #2563eb;
+  --graph-select-ring: rgba(37, 99, 235, 0.22);
+  --graph-select-shadow: rgba(37, 99, 235, 0.28);
 }
 
 [data-theme='dark'] {
@@ -112,6 +115,9 @@
   --graph-trace: #fb923c;
   --graph-trace-ring: rgba(249, 115, 22, 0.3);
   --graph-trace-shadow: rgba(234, 88, 12, 0.38);
+  --graph-select: #60a5fa;
+  --graph-select-ring: rgba(96, 165, 250, 0.25);
+  --graph-select-shadow: rgba(59, 130, 246, 0.35);
 }
 
 body {

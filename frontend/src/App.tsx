@@ -2,9 +2,13 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { ReactFlow, Background, Controls, Handle, Position, useNodesState, useEdgesState, type Node, type Edge, type NodeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { FileCode, Activity, Maximize2, Play, Code2, Sun, Moon, Minimize2 } from 'lucide-react';
+import { FileCode, Activity, Maximize2, Play, Code2, Sun, Moon, Minimize2, Sparkles, Settings } from 'lucide-react';
 import { parseMLIRToGraph, extractPyTorchArgsFromPython } from './mlirParser';
 import { buildPyTorchDisplayMaps, type SourceMetadata } from './sourceMapping';
+import { loadAIConfig, saveAIConfig, isAIConfigValid, type AIConfig } from './ai/aiConfig';
+import { AIProviderSettings } from './components/AIProviderSettings';
+import { SelectionBar } from './components/SelectionBar';
+import { AISidebar } from './components/AISidebar';
 
 function RegionOpNode({ data }: { data: any }) {
   return (
@@ -375,11 +379,19 @@ export default function App() {
   const [tracedNodeId, setTracedNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
 
+  const [aiConfig, setAiConfig] = useState<AIConfig>(loadAIConfig);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [isAISidebarOpen, setIsAISidebarOpen] = useState<boolean>(false);
+  const [aiSidebarTab, setAiSidebarTab] = useState<'explain' | 'chat'>('explain');
+  const [explainedNodeId, setExplainedNodeId] = useState<string | null>(null);
+
   useEffect(() => {
     const clearTraceOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setTracedNodeId(null);
         setContextMenu(null);
+        setSelectedNodeIds(new Set());
       }
     };
     document.addEventListener('keydown', clearTraceOnEscape);
@@ -547,6 +559,8 @@ export default function App() {
     setFocusedNodeId(null);
     setTracedNodeId(null);
     setContextMenu(null);
+    setSelectedNodeIds(new Set());
+    setExplainedNodeId(null);
   }, [codeContent, setNodes, setEdges]);
 
   const focusSelection = useMemo(() => {
@@ -654,35 +668,65 @@ export default function App() {
   }, [tracedNodeId, traceSelection.tracedIds, nodes, collapsedCompositeIds]);
 
   const focusedNodes = useMemo(() => visibleNodes.map((node) => {
-    if (!focusedNodeId && !tracedNodeId) return node;
+    const isMultiSelected = selectedNodeIds.has(node.id);
+
+    if (!focusedNodeId && !tracedNodeId && !isMultiSelected) return node;
+
     if (tracedNodeId) {
       const isTraced = traceVisibleNodeIds.has(node.id);
       return {
         ...node,
         style: {
           ...node.style,
-          opacity: isTraced ? 1 : 0.18,
-          outline: node.id === tracedNodeId ? '3px solid var(--graph-trace)' : undefined,
-          outlineOffset: node.id === tracedNodeId ? '2px' : undefined,
-          boxShadow: node.id === tracedNodeId ? '0 0 0 5px var(--graph-trace-ring), 0 8px 20px var(--graph-trace-shadow)' : node.style?.boxShadow,
+          opacity: isTraced || isMultiSelected ? 1 : 0.18,
+          outline: node.id === tracedNodeId ? '3px solid var(--graph-trace)' : isMultiSelected ? '3px solid var(--graph-select)' : undefined,
+          outlineOffset: (node.id === tracedNodeId || isMultiSelected) ? '2px' : undefined,
+          boxShadow: node.id === tracedNodeId
+            ? '0 0 0 5px var(--graph-trace-ring), 0 8px 20px var(--graph-trace-shadow)'
+            : isMultiSelected
+              ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
+              : node.style?.boxShadow,
           transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
         },
       };
     }
-    const isFocused = focusSelection.selectedIds.has(node.id);
-    const isContext = focusSelection.contextIds.has(node.id);
-    return {
-      ...node,
-      style: {
-        ...node.style,
-        opacity: isFocused ? 1 : isContext ? 0.58 : 0.18,
-        outline: node.id === focusedNodeId ? '3px solid var(--graph-focus)' : undefined,
-        outlineOffset: node.id === focusedNodeId ? '2px' : undefined,
-        boxShadow: node.id === focusedNodeId ? '0 0 0 5px var(--graph-focus-ring), 0 8px 20px var(--graph-focus-shadow)' : node.style?.boxShadow,
-        transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
-      },
-    };
-  }), [visibleNodes, focusedNodeId, tracedNodeId, traceVisibleNodeIds, focusSelection]);
+
+    if (focusedNodeId) {
+      const isFocused = focusSelection.selectedIds.has(node.id);
+      const isContext = focusSelection.contextIds.has(node.id);
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: isFocused || isMultiSelected ? 1 : isContext ? 0.58 : 0.18,
+          outline: node.id === focusedNodeId ? '3px solid var(--graph-focus)' : isMultiSelected ? '3px solid var(--graph-select)' : undefined,
+          outlineOffset: (node.id === focusedNodeId || isMultiSelected) ? '2px' : undefined,
+          boxShadow: node.id === focusedNodeId
+            ? '0 0 0 5px var(--graph-focus-ring), 0 8px 20px var(--graph-focus-shadow)'
+            : isMultiSelected
+              ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
+              : node.style?.boxShadow,
+          transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
+        },
+      };
+    }
+
+    if (isMultiSelected) {
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: 1,
+          outline: '3px solid var(--graph-select)',
+          outlineOffset: '2px',
+          boxShadow: '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)',
+          transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
+        },
+      };
+    }
+
+    return node;
+  }), [visibleNodes, focusedNodeId, tracedNodeId, traceVisibleNodeIds, focusSelection, selectedNodeIds]);
 
   const focusedEdges = useMemo(() => displayEdges.map((edge) => {
     if (!focusedNodeId && !tracedNodeId) {
@@ -716,10 +760,28 @@ export default function App() {
     };
   }), [displayEdges, focusedNodeId, tracedNodeId, traceSelection.tracedEdgeIds, focusSelection]);
 
+  const handleSummariseClick = () => {
+    if (!isAIConfigValid(aiConfig)) {
+      setIsSettingsOpen(true);
+    }
+  };
+
   return (
     <div data-theme={isDarkMode ? 'dark' : 'light'} className="app-shell flex h-screen w-full bg-[var(--app-bg)] text-[var(--text)] overflow-hidden font-sans">
       {/* Sidebar / Timeline */}
-      <div className={`${isFullscreen ? 'hidden' : 'flex'} w-[320px] border-r border-[var(--border)] bg-[var(--surface)] flex-col h-full shrink-0`}>
+      <div className={`${isFullscreen ? 'hidden' : 'flex'} w-[320px] border-r border-[var(--border)] bg-[var(--surface)] flex-col h-full shrink-0 relative`}>
+        <AISidebar
+          isOpen={isAISidebarOpen}
+          onClose={() => setIsAISidebarOpen(false)}
+          activeTab={aiSidebarTab}
+          onTabChange={setAiSidebarTab}
+          explainedNodeId={explainedNodeId}
+          explainedNodeLabel={
+            explainedNodeId
+              ? (displayNodes.find((n) => n.id === explainedNodeId)?.data?.rawLabel as string || explainedNodeId)
+              : undefined
+          }
+        />
         <div className="p-5 border-b border-[var(--border)]">
           <h1 className="font-semibold text-[15px] flex items-center gap-2 text-[var(--text)]">
              <Activity className="w-[18px] h-[18px] text-[var(--muted)]" />
@@ -849,33 +911,79 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <label
                     title="Show original PyTorch forward parameter names alongside MLIR argument names."
-                     className="flex items-center gap-2 text-xs text-[var(--muted-strong)] font-medium cursor-pointer select-none"
+                    className="flex items-center gap-2 text-xs text-[var(--muted-strong)] font-medium cursor-pointer select-none"
                   >
                     <input
                       type="checkbox"
                       checked={showPyTorchNames}
                       onChange={(e) => setShowPyTorchNames(e.target.checked)}
-                       className="rounded border-[var(--control-border)] text-[var(--button-bg)] focus:ring-[var(--button-bg)] h-3.5 w-3.5"
+                      className="rounded border-[var(--control-border)] text-[var(--button-bg)] focus:ring-[var(--button-bg)] h-3.5 w-3.5"
                     />
                     Show PyTorch Names
                   </label>
-                   <button onClick={() => setIsDarkMode((dark) => !dark)} aria-label={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} title={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} className="p-1.5 rounded-md text-[var(--muted-strong)] hover:bg-[var(--control-hover)] transition-colors">
-                     {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                   </button>
-                   <button onClick={() => setIsFullscreen((fullscreen) => !fullscreen)} className="text-xs px-2 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors">
-                     {isFullscreen ? 'Exit graph fullscreen' : 'Fullscreen graph'}
-                   </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSummariseClick}
+                    title="AI Node Summaries"
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                    Summarise
+                  </button>
+
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsSettingsOpen((prev) => !prev)}
+                      title="AI Provider Settings"
+                      aria-label="AI Provider Settings"
+                      className="p-1.5 rounded-md text-[var(--muted-strong)] hover:bg-[var(--control-hover)] transition-colors"
+                    >
+                      <Settings className="w-4 h-4" />
+                    </button>
+                    <AIProviderSettings
+                      key={isSettingsOpen ? 'open' : 'closed'}
+                      isOpen={isSettingsOpen}
+                      onClose={() => setIsSettingsOpen(false)}
+                      config={aiConfig}
+                      onSave={(newCfg) => {
+                        setAiConfig(newCfg);
+                        saveAIConfig(newCfg);
+                      }}
+                    />
+                  </div>
+
+                  <button onClick={() => setIsDarkMode((dark) => !dark)} aria-label={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} title={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} className="p-1.5 rounded-md text-[var(--muted-strong)] hover:bg-[var(--control-hover)] transition-colors">
+                    {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                  </button>
+                  <button onClick={() => setIsFullscreen((fullscreen) => !fullscreen)} className="text-xs px-2 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors">
+                    {isFullscreen ? 'Exit graph fullscreen' : 'Fullscreen graph'}
+                  </button>
                 </div>
               </div>
               <div className="flex-1 w-full h-full">
                 <ReactFlow 
-        nodes={focusedNodes}
-        edges={focusedEdges}
-                   onNodesChange={onConstrainedNodesChange}
-                   onEdgesChange={onEdgesChange}
-                  onNodeClick={(_, node) => {
+                  nodes={focusedNodes}
+                  edges={focusedEdges}
+                  onNodesChange={onConstrainedNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onNodeClick={(event, node) => {
                     setContextMenu(null);
-                    setFocusedNodeId((current) => current === node.id ? null : node.id);
+                    if (event.ctrlKey || event.metaKey) {
+                      setSelectedNodeIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(node.id)) {
+                          next.delete(node.id);
+                        } else {
+                          next.add(node.id);
+                        }
+                        return next;
+                      });
+                    } else {
+                      setSelectedNodeIds(new Set());
+                      setFocusedNodeId((current) => current === node.id ? null : node.id);
+                    }
                   }}
                   onNodeContextMenu={(event, node) => {
                     event.preventDefault();
@@ -885,6 +993,7 @@ export default function App() {
                     setFocusedNodeId(null);
                     setTracedNodeId(null);
                     setContextMenu(null);
+                    setSelectedNodeIds(new Set());
                   }}
                   nodeTypes={nodeTypes} 
                   fitView
@@ -892,6 +1001,10 @@ export default function App() {
                    <Background color="var(--graph-grid)" gap={16} />
                    <Controls className="graph-controls !border-[var(--border)] !shadow-sm" showInteractive={false} />
                 </ReactFlow>
+                <SelectionBar
+                  selectedCount={selectedNodeIds.size}
+                  onClear={() => setSelectedNodeIds(new Set())}
+                />
                 {contextMenu && (
                   <div
                     className="fixed z-[100] min-w-28 rounded-md border border-[var(--border)] bg-[var(--surface)] p-1 shadow-lg"
@@ -908,6 +1021,18 @@ export default function App() {
                       }}
                     >
                       Trace
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full rounded px-3 py-1.5 text-left text-xs font-medium text-[var(--text)] hover:bg-[var(--control-hover)]"
+                      onClick={() => {
+                        setExplainedNodeId(contextMenu.nodeId);
+                        setIsAISidebarOpen(true);
+                        setAiSidebarTab('explain');
+                        setContextMenu(null);
+                      }}
+                    >
+                      Explain
                     </button>
                   </div>
                 )}
