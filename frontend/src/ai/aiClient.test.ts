@@ -44,7 +44,7 @@ describe('aiClient', () => {
     );
   });
 
-  it('surfaces HTTP errors cleanly', async () => {
+  it('surfaces 401 Unauthorized errors cleanly', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: false,
       status: 401,
@@ -58,5 +58,62 @@ describe('aiClient', () => {
         messages: [{ role: 'user', content: 'Hi' }],
       })
     ).rejects.toThrow('AI API request failed (401): Invalid API key provided');
+  });
+
+  it('surfaces 429 Rate Limit errors cleanly', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      json: async () => ({ error: { message: 'Rate limit exceeded' } }),
+    } as Response);
+
+    await expect(
+      createChatCompletion({
+        config,
+        messages: [{ role: 'user', content: 'Hi' }],
+      })
+    ).rejects.toThrow('AI API request failed (429): Rate limit exceeded');
+  });
+
+  it('surfaces 500 Server errors cleanly', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: async () => 'Internal Error Details',
+    } as Response);
+
+    await expect(
+      createChatCompletion({
+        config,
+        messages: [{ role: 'user', content: 'Hi' }],
+      })
+    ).rejects.toThrow('AI API request failed (500): Internal Error Details');
+  });
+
+  it('handles network failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(
+      createChatCompletion({
+        config,
+        messages: [{ role: 'user', content: 'Hi' }],
+      })
+    ).rejects.toThrow('Failed to fetch');
+  });
+
+  it('throws error when choices or content is missing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [] }),
+    } as Response);
+
+    await expect(
+      createChatCompletion({
+        config,
+        messages: [{ role: 'user', content: 'Hi' }],
+      })
+    ).rejects.toThrow('AI API returned an invalid or empty choice response.');
   });
 });

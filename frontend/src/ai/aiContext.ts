@@ -1,6 +1,17 @@
 import type { Node, Edge } from '@xyflow/react';
 import type { GraphContext, CompactNode, CompactEdge, NodeContext } from './types';
 
+export function classifyNodeType(node: Node): string {
+  if (node.data?.isBlockArg) return 'block argument';
+  if (node.data?.isFuncArg || node.type === 'input') return 'function argument';
+  if (node.data?.isYield) return 'yield';
+  if (node.type === 'output' || String(node.data?.rawLabel || '').includes('return')) return 'return';
+  if (node.type === 'arithmetic' || Boolean(node.data?.arithOp)) return 'arithmetic operation';
+  if (node.type === 'regionOp') return 'region container';
+  if (typeof node.data?.rawOp === 'string') return `operation (${node.data.rawOp})`;
+  return node.type || 'operation';
+}
+
 export function serializeGraphForAI(nodes: Node[], edges: Edge[]): GraphContext {
   const compactNodes: CompactNode[] = nodes
     .filter((n) => !n.hidden && !n.data?.isConstantsGroup && !n.data?.isInputsGroup && !n.data?.isOutputsGroup)
@@ -9,7 +20,7 @@ export function serializeGraphForAI(nodes: Node[], edges: Edge[]): GraphContext 
       return {
         id: n.id,
         label: rawLabel,
-        type: n.type,
+        type: classifyNodeType(n),
         ...(typeof n.data?.rawOp === 'string' ? { rawOp: n.data.rawOp } : {}),
         ...(n.parentId ? { parentId: n.parentId } : {}),
       };
@@ -33,6 +44,7 @@ export function extractNodeContext(nodeId: string, nodes: Node[], edges: Edge[])
   if (!node) return null;
 
   const rawLabel = typeof node.data?.rawLabel === 'string' ? node.data.rawLabel : typeof node.data?.label === 'string' ? node.data.label : node.id;
+  const type = classifyNodeType(node);
   const incomingEdges = edges
     .filter((e) => e.target === nodeId && !e.hidden)
     .map((e) => ({ source: e.source, target: e.target }));
@@ -43,7 +55,7 @@ export function extractNodeContext(nodeId: string, nodes: Node[], edges: Edge[])
   return {
     id: node.id,
     label: rawLabel,
-    type: node.type,
+    type,
     rawOp: typeof node.data?.rawOp === 'string' ? node.data.rawOp : undefined,
     parentId: node.parentId,
     incomingEdges,

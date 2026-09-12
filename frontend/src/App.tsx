@@ -2,17 +2,22 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { ReactFlow, Background, Controls, Handle, Position, useNodesState, useEdgesState, type Node, type Edge, type NodeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { FileCode, Activity, Maximize2, Play, Code2, Sun, Moon, Minimize2, Sparkles, Settings } from 'lucide-react';
+import { FileCode, Activity, Maximize2, Play, Code2, Sun, Moon, Minimize2, Sparkles, Settings, Loader2, AlertCircle, X } from 'lucide-react';
 import { parseMLIRToGraph, extractPyTorchArgsFromPython } from './mlirParser';
 import { buildPyTorchDisplayMaps, type SourceMetadata } from './sourceMapping';
 import { loadAIConfig, saveAIConfig, isAIConfigValid, type AIConfig } from './ai/aiConfig';
+import { createChatCompletion } from './ai/aiClient';
+import { serializeGraphForAI, extractNodeContext } from './ai/aiContext';
+import { buildSummarisePrompt, buildExplainPrompt } from './ai/aiPrompts';
+import { parseSummariseResponse } from './ai/aiParser';
 import { AIProviderSettings } from './components/AIProviderSettings';
 import { SelectionBar } from './components/SelectionBar';
 import { AISidebar } from './components/AISidebar';
 
 function RegionOpNode({ data }: { data: any }) {
+  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
   return (
-    <div title={`PyTorch: ${data.label}\nMLIR: ${data.rawLabel || data.label}`} className="relative h-full w-full rounded-xl border border-[var(--graph-container-border)] bg-[var(--graph-container-bg)] shadow-sm overflow-hidden">
+    <div title={`PyTorch: ${data.label}\nMLIR: ${data.rawLabel || data.label}${summaryTooltip}`} className="relative h-full w-full rounded-xl border border-[var(--graph-container-border)] bg-[var(--graph-container-bg)] shadow-sm overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-[37px] bottom-0 flex flex-col">
         {data.inputZoneCount > 0 && <div className="h-[70px] shrink-0 border-b border-[var(--graph-input-zone-border)] bg-[var(--graph-input-zone-bg)]" />}
         <div className="min-h-0 flex-1 bg-[var(--graph-container-inner)]" />
@@ -42,8 +47,9 @@ function RegionOpNode({ data }: { data: any }) {
 
 function ArithmeticNode({ data }: { data: any }) {
   const orderedBinary = data.orderedBinary;
+  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
   return (
-    <div className="arithmetic-node" title={`MLIR: ${data.rawLabel || data.label}`}>
+    <div className="arithmetic-node" title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
       <div className="arithmetic-node-shape">
         <span>{data.label}</span>
       </div>
@@ -386,6 +392,14 @@ export default function App() {
   const [aiSidebarTab, setAiSidebarTab] = useState<'explain' | 'chat'>('explain');
   const [explainedNodeId, setExplainedNodeId] = useState<string | null>(null);
 
+  const [nodeSummaries, setNodeSummaries] = useState<Record<string, string>>({});
+  const [isSummarising, setIsSummarising] = useState<boolean>(false);
+  const [summariseError, setSummariseError] = useState<string | null>(null);
+
+  const [explanation, setExplanation] = useState<string | null>(null);
+  const [explanationLoading, setExplanationLoading] = useState<boolean>(false);
+  const [explanationError, setExplanationError] = useState<string | null>(null);
+
   useEffect(() => {
     const clearTraceOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -416,6 +430,7 @@ export default function App() {
 
   const displayNodes = useMemo(() => {
     const mappedNodes = nodes.map((node: Node<any>) => {
+      const summary = nodeSummaries[node.id];
       // 1. Function Arguments (%arg0, %arg1, ...)
       if (node.type === 'input' || node.data?.isFuncArg) {
         const idx = node.data.argIndex ?? 0;
@@ -424,7 +439,7 @@ export default function App() {
         const displayLabel = showPyTorchNames && ptName ? ptName : rawLabel;
         return {
           ...node,
-          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: ptName },
+          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: ptName, summary },
           style: { ...node.style, width: 'auto', minWidth: '36px', textAlign: 'center' as const },
         };
       }
@@ -438,7 +453,7 @@ export default function App() {
         const displayLabel = showPyTorchNames && inheritedName ? inheritedName : rawLabel;
         return {
           ...node,
-          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: inheritedName },
+          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: inheritedName, summary },
           style: showPyTorchNames
             ? { ...node.style, width: pytorchBlockArgWidth(displayLabel), minWidth: PYTORCH_BLOCK_ARG_MIN_WIDTH, textAlign: 'center' as const, whiteSpace: 'nowrap' }
             : node.style,
@@ -449,7 +464,7 @@ export default function App() {
       // using the concise operation name in PyTorch Names mode.
       if (node.data?.isYield) {
         const rawLabel = String(node.data.rawLabel || node.data.label);
-        return { ...node, data: { ...node.data, rawLabel, label: showPyTorchNames ? 'yield' : rawLabel } };
+        return { ...node, data: { ...node.data, rawLabel, label: showPyTorchNames ? 'yield' : rawLabel, summary } };
       }
 
       // 3. Region container nodes (linalg.generic, etc.)
@@ -467,6 +482,7 @@ export default function App() {
             isComposite,
             collapsed: isComposite && collapsedCompositeIds.has(node.id),
             onToggleCollapse: () => toggleComposite(node.id),
+            summary,
           },
           style: isComposite && collapsedCompositeIds.has(node.id)
             ? { ...node.style, height: 116 }
@@ -480,41 +496,41 @@ export default function App() {
         const arithmeticSymbol = ARITHMETIC_SYMBOLS[node.data.rawOp as string] || node.data.arithOp;
         const isArithmetic = Boolean(arithmeticSymbol);
         if (isArithmetic && showPyTorchNames) {
-          return { ...node, type: 'arithmetic', data: { ...node.data, rawLabel, label: arithmeticSymbol } };
+          return { ...node, type: 'arithmetic', data: { ...node.data, rawLabel, label: arithmeticSymbol, summary } };
         }
         if (showPyTorchNames) {
           const semanticOperationLabel = PYTORCH_OPERATION_LABELS[node.data.rawOp as string];
           if (semanticOperationLabel) {
             return {
               ...node,
-              data: { ...node.data, rawLabel, label: semanticOperationLabel },
+              data: { ...node.data, rawLabel, label: semanticOperationLabel, summary },
               className: node.data.rawOp === 'tensor.empty' ? 'tensor-empty-node' : 'function-operation-node',
             };
           }
           const sourceLabel = opLabelMap[node.id];
           if (sourceLabel) {
-            return { ...node, data: { ...node.data, rawLabel, label: sourceLabel } };
+            return { ...node, data: { ...node.data, rawLabel, label: sourceLabel, summary } };
           }
           if (node.data.arithOp) {
-            return { ...node, data: { ...node.data, rawLabel, label: node.data.arithOp } };
+            return { ...node, data: { ...node.data, rawLabel, label: node.data.arithOp, summary } };
           }
           if (node.data.constValue != null) {
-            return { ...node, data: { ...node.data, rawLabel, label: String(node.data.constValue) } };
+            return { ...node, data: { ...node.data, rawLabel, label: String(node.data.constValue), summary } };
           }
           const mlirResults: string[] = Array.isArray(node.data.mlirResults) ? node.data.mlirResults : [];
           const resultName = mlirResults.map((r: string) => ssaMap[r]).find(Boolean);
           if (resultName) {
             const shortOp = (node.data.rawOp as string).split('.').pop() ?? node.data.rawOp;
-            return { ...node, data: { ...node.data, rawLabel, label: `${resultName} = ${shortOp}` } };
+            return { ...node, data: { ...node.data, rawLabel, label: `${resultName} = ${shortOp}`, summary } };
           }
         }
-        return { ...node, type: 'default', data: { ...node.data, rawLabel, label: rawLabel } };
+        return { ...node, type: 'default', data: { ...node.data, rawLabel, label: rawLabel, summary } };
       }
 
-      return node;
+      return { ...node, data: { ...node.data, summary } };
     });
     return showPyTorchNames ? redistributePyTorchBlockArgs(mappedNodes) : mappedNodes;
-  }, [nodes, showPyTorchNames, pytorchArgs, ssaMap, opLabelMap, compositeNodeIds, collapsedCompositeIds]);
+  }, [nodes, showPyTorchNames, pytorchArgs, ssaMap, opLabelMap, compositeNodeIds, collapsedCompositeIds, nodeSummaries]);
 
   const displayEdges = useMemo(() => {
     const collapsed = new Set(compositeNodeIds.filter(id => collapsedCompositeIds.has(id)));
@@ -669,8 +685,9 @@ export default function App() {
 
   const focusedNodes = useMemo(() => visibleNodes.map((node) => {
     const isMultiSelected = selectedNodeIds.has(node.id);
+    const isExplained = node.id === explainedNodeId;
 
-    if (!focusedNodeId && !tracedNodeId && !isMultiSelected) return node;
+    if (!focusedNodeId && !tracedNodeId && !isMultiSelected && !isExplained) return node;
 
     if (tracedNodeId) {
       const isTraced = traceVisibleNodeIds.has(node.id);
@@ -678,14 +695,22 @@ export default function App() {
         ...node,
         style: {
           ...node.style,
-          opacity: isTraced || isMultiSelected ? 1 : 0.18,
-          outline: node.id === tracedNodeId ? '3px solid var(--graph-trace)' : isMultiSelected ? '3px solid var(--graph-select)' : undefined,
-          outlineOffset: (node.id === tracedNodeId || isMultiSelected) ? '2px' : undefined,
+          opacity: isTraced || isMultiSelected || isExplained ? 1 : 0.18,
+          outline: node.id === tracedNodeId
+            ? '3px solid var(--graph-trace)'
+            : isExplained
+              ? '3px solid var(--graph-explain)'
+              : isMultiSelected
+                ? '3px solid var(--graph-select)'
+                : undefined,
+          outlineOffset: (node.id === tracedNodeId || isExplained || isMultiSelected) ? '2px' : undefined,
           boxShadow: node.id === tracedNodeId
             ? '0 0 0 5px var(--graph-trace-ring), 0 8px 20px var(--graph-trace-shadow)'
-            : isMultiSelected
-              ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
-              : node.style?.boxShadow,
+            : isExplained
+              ? '0 0 0 5px var(--graph-explain-ring), 0 8px 20px var(--graph-explain-shadow)'
+              : isMultiSelected
+                ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
+                : node.style?.boxShadow,
           transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
         },
       };
@@ -698,14 +723,36 @@ export default function App() {
         ...node,
         style: {
           ...node.style,
-          opacity: isFocused || isMultiSelected ? 1 : isContext ? 0.58 : 0.18,
-          outline: node.id === focusedNodeId ? '3px solid var(--graph-focus)' : isMultiSelected ? '3px solid var(--graph-select)' : undefined,
-          outlineOffset: (node.id === focusedNodeId || isMultiSelected) ? '2px' : undefined,
+          opacity: isFocused || isMultiSelected || isExplained ? 1 : isContext ? 0.58 : 0.18,
+          outline: node.id === focusedNodeId
+            ? '3px solid var(--graph-focus)'
+            : isExplained
+              ? '3px solid var(--graph-explain)'
+              : isMultiSelected
+                ? '3px solid var(--graph-select)'
+                : undefined,
+          outlineOffset: (node.id === focusedNodeId || isExplained || isMultiSelected) ? '2px' : undefined,
           boxShadow: node.id === focusedNodeId
             ? '0 0 0 5px var(--graph-focus-ring), 0 8px 20px var(--graph-focus-shadow)'
-            : isMultiSelected
-              ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
-              : node.style?.boxShadow,
+            : isExplained
+              ? '0 0 0 5px var(--graph-explain-ring), 0 8px 20px var(--graph-explain-shadow)'
+              : isMultiSelected
+                ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
+                : node.style?.boxShadow,
+          transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
+        },
+      };
+    }
+
+    if (isExplained) {
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: 1,
+          outline: '3px solid var(--graph-explain)',
+          outlineOffset: '2px',
+          boxShadow: '0 0 0 5px var(--graph-explain-ring), 0 8px 20px var(--graph-explain-shadow)',
           transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
         },
       };
@@ -726,7 +773,7 @@ export default function App() {
     }
 
     return node;
-  }), [visibleNodes, focusedNodeId, tracedNodeId, traceVisibleNodeIds, focusSelection, selectedNodeIds]);
+  }), [visibleNodes, focusedNodeId, tracedNodeId, traceVisibleNodeIds, focusSelection, selectedNodeIds, explainedNodeId]);
 
   const focusedEdges = useMemo(() => displayEdges.map((edge) => {
     if (!focusedNodeId && !tracedNodeId) {
@@ -760,9 +807,71 @@ export default function App() {
     };
   }), [displayEdges, focusedNodeId, tracedNodeId, traceSelection.tracedEdgeIds, focusSelection]);
 
-  const handleSummariseClick = () => {
+  const handleSummariseClick = async () => {
     if (!isAIConfigValid(aiConfig)) {
       setIsSettingsOpen(true);
+      return;
+    }
+
+    if (isSummarising) return;
+
+    const targetNodes = visibleNodes.filter(
+      (n) => !n.hidden && !n.data?.isConstantsGroup && !n.data?.isInputsGroup && !n.data?.isOutputsGroup
+    );
+
+    if (targetNodes.length === 0) return;
+
+    setIsSummarising(true);
+    setSummariseError(null);
+
+    try {
+      const compactGraph = serializeGraphForAI(targetNodes, displayEdges);
+      const promptMessages = buildSummarisePrompt(compactGraph.nodes);
+      const responseText = await createChatCompletion({
+        config: aiConfig,
+        messages: promptMessages,
+      });
+
+      const requestedIds = compactGraph.nodes.map((n) => n.id);
+      const parsedSummaries = parseSummariseResponse(responseText, requestedIds);
+      setNodeSummaries((prev) => ({ ...prev, ...parsedSummaries }));
+    } catch (err: any) {
+      setSummariseError(err?.message || 'Failed to generate graph summaries.');
+    } finally {
+      setIsSummarising(false);
+    }
+  };
+
+  const handleExplainNode = async (nodeId: string) => {
+    if (!isAIConfigValid(aiConfig)) {
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    setExplainedNodeId(nodeId);
+    setExplanation(null);
+    setExplanationError(null);
+    setExplanationLoading(true);
+    setIsAISidebarOpen(true);
+    setAiSidebarTab('explain');
+
+    try {
+      const ctx = extractNodeContext(nodeId, nodes, edges);
+      if (!ctx) {
+        throw new Error(`Node ${nodeId} was not found in graph context.`);
+      }
+
+      const promptMessages = buildExplainPrompt(ctx, codeContent, pythonCode);
+      const text = await createChatCompletion({
+        config: aiConfig,
+        messages: promptMessages,
+      });
+
+      setExplanation(text);
+    } catch (err: any) {
+      setExplanationError(err?.message || 'Failed to generate node explanation.');
+    } finally {
+      setExplanationLoading(false);
     }
   };
 
@@ -772,7 +881,10 @@ export default function App() {
       <div className={`${isFullscreen ? 'hidden' : 'flex'} w-[320px] border-r border-[var(--border)] bg-[var(--surface)] flex-col h-full shrink-0 relative`}>
         <AISidebar
           isOpen={isAISidebarOpen}
-          onClose={() => setIsAISidebarOpen(false)}
+          onClose={() => {
+            setIsAISidebarOpen(false);
+            setExplainedNodeId(null);
+          }}
           activeTab={aiSidebarTab}
           onTabChange={setAiSidebarTab}
           explainedNodeId={explainedNodeId}
@@ -781,6 +893,9 @@ export default function App() {
               ? (displayNodes.find((n) => n.id === explainedNodeId)?.data?.rawLabel as string || explainedNodeId)
               : undefined
           }
+          explanation={explanation}
+          explanationLoading={explanationLoading}
+          explanationError={explanationError}
         />
         <div className="p-5 border-b border-[var(--border)]">
           <h1 className="font-semibold text-[15px] flex items-center gap-2 text-[var(--text)]">
@@ -925,11 +1040,16 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleSummariseClick}
+                    disabled={isSummarising}
                     title="AI Node Summaries"
-                    className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors"
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors disabled:opacity-50"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                    Summarise
+                    {isSummarising ? (
+                      <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                    )}
+                    {isSummarising ? 'Summarising...' : 'Summarise'}
                   </button>
 
                   <div className="relative">
@@ -1001,6 +1121,21 @@ export default function App() {
                    <Background color="var(--graph-grid)" gap={16} />
                    <Controls className="graph-controls !border-[var(--border)] !shadow-sm" showInteractive={false} />
                 </ReactFlow>
+                {summariseError && (
+                  <div className="absolute top-14 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--graph-output-border)] bg-[var(--graph-output-bg)] text-[var(--graph-output-zone-text)] text-xs shadow-md">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="font-medium">{summariseError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSummariseError(null)}
+                      className="ml-1 p-0.5 rounded hover:bg-black/10 transition-colors"
+                      title="Dismiss"
+                      aria-label="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
                 <SelectionBar
                   selectedCount={selectedNodeIds.size}
                   onClear={() => setSelectedNodeIds(new Set())}
@@ -1026,9 +1161,7 @@ export default function App() {
                       type="button"
                       className="w-full rounded px-3 py-1.5 text-left text-xs font-medium text-[var(--text)] hover:bg-[var(--control-hover)]"
                       onClick={() => {
-                        setExplainedNodeId(contextMenu.nodeId);
-                        setIsAISidebarOpen(true);
-                        setAiSidebarTab('explain');
+                        handleExplainNode(contextMenu.nodeId);
                         setContextMenu(null);
                       }}
                     >
