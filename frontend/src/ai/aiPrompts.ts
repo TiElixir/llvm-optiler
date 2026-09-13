@@ -1,4 +1,4 @@
-import type { CompactNode, NodeContext } from './types';
+import type { CompactNode, NodeContext, GraphContext } from './types';
 import type { ChatMessage } from './aiClient';
 
 export function buildSummarisePrompt(nodes: CompactNode[]): ChatMessage[] {
@@ -89,4 +89,59 @@ ${pythonCode || '(Empty source)'}
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userContent },
   ];
+}
+
+export function buildChatPrompt(
+  mlirCode: string,
+  pythonCode: string,
+  graphContext: GraphContext,
+  chatHistory: ChatMessage[],
+  latestUserMessage: string
+): ChatMessage[] {
+  const MAX_MLIR_CHARS = 32000;
+  const cappedMlir =
+    mlirCode.length > MAX_MLIR_CHARS
+      ? mlirCode.slice(0, MAX_MLIR_CHARS) + '\n... [MLIR Snapshot truncated due to length]'
+      : mlirCode;
+
+  const graphSummary = JSON.stringify(graphContext, null, 2);
+
+  const systemMessage: ChatMessage = {
+    role: 'system',
+    content: `You are an expert compiler and AI optimization assistant.
+
+You are assisting a developer inspecting the currently displayed compiler Control Flow Graph, MLIR snapshot, and PyTorch source code.
+
+AUTHORITATIVE CONTEXT:
+
+Current PyTorch Source:
+\`\`\`python
+${pythonCode || '(Empty source)'}
+\`\`\`
+
+Current MLIR Snapshot:
+\`\`\`mlir
+${cappedMlir || '(Empty snapshot)'}
+\`\`\`
+
+Graph Topology Serialization (Node IDs, Labels, Types, and Edges):
+\`\`\`json
+${graphSummary}
+\`\`\`
+
+INSTRUCTIONS:
+- Use the supplied MLIR, PyTorch source, and Graph Serialization as the authoritative context.
+- Do NOT invent nodes, edges, operations, or source code not supported by the context.
+- If the supplied context does not contain enough information to answer a question, explicitly state so.
+- Explain compiler, MLIR, and tensor concepts in clear, direct language suitable for a software engineer.
+- Keep answers concise unless the user explicitly asks for details or deep analysis.
+- Use Markdown for formatting and code snippets. Syntax highlighting for code blocks is supported.`,
+  };
+
+  const userMessage: ChatMessage = {
+    role: 'user',
+    content: latestUserMessage,
+  };
+
+  return [systemMessage, ...chatHistory, userMessage];
 }

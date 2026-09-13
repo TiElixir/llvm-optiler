@@ -8,11 +8,11 @@ import { buildPyTorchDisplayMaps, type SourceMetadata } from './sourceMapping';
 import { loadAIConfig, saveAIConfig, isAIConfigValid, type AIConfig } from './ai/aiConfig';
 import { createChatCompletion } from './ai/aiClient';
 import { serializeGraphForAI, extractNodeContext } from './ai/aiContext';
-import { buildSummarisePrompt, buildExplainPrompt } from './ai/aiPrompts';
+import { buildSummarisePrompt, buildExplainPrompt, buildChatPrompt } from './ai/aiPrompts';
 import { parseSummariseResponse, truncateExplanation } from './ai/aiParser';
 import { AIProviderSettings } from './components/AIProviderSettings';
 import { SelectionBar } from './components/SelectionBar';
-import { AISidebar } from './components/AISidebar';
+import { AISidebar, type ChatMessageItem } from './components/AISidebar';
 
 function RegionOpNode({ data }: { data: any }) {
   const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
@@ -437,6 +437,10 @@ export default function App() {
   const [explanationLoading, setExplanationLoading] = useState<boolean>(false);
   const [explanationError, setExplanationError] = useState<string | null>(null);
 
+  const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([]);
+  const [chatLoading, setChatLoading] = useState<boolean>(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+
   useEffect(() => {
     const clearTraceOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -617,6 +621,9 @@ export default function App() {
     setNodeSummaries({});
     setExplanation(null);
     setExplanationError(null);
+    setChatMessages([]);
+    setChatLoading(false);
+    setChatError(null);
   }, [codeContent, setNodes, setEdges]);
 
   const focusSelection = useMemo(() => {
@@ -916,6 +923,42 @@ export default function App() {
     }
   };
 
+  const handleSendChatMessage = async (userText: string) => {
+    if (!isAIConfigValid(aiConfig)) {
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    const newUserMsg: ChatMessageItem = { role: 'user', content: userText };
+    const updatedMessages = [...chatMessages, newUserMsg];
+    setChatMessages(updatedMessages);
+    setChatLoading(true);
+    setChatError(null);
+
+    try {
+      const graphContext = serializeGraphForAI(nodes, edges);
+      const promptMessages = buildChatPrompt(
+        codeContent,
+        pythonCode,
+        graphContext,
+        chatMessages,
+        userText
+      );
+
+      const responseText = await createChatCompletion({
+        config: aiConfig,
+        messages: promptMessages,
+      });
+
+      const assistantMsg: ChatMessageItem = { role: 'assistant', content: responseText };
+      setChatMessages([...updatedMessages, assistantMsg]);
+    } catch (err: any) {
+      setChatError(err?.message || 'Failed to get a response from the AI agent.');
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   return (
     <div data-theme={isDarkMode ? 'dark' : 'light'} className="app-shell flex h-screen w-full bg-[var(--app-bg)] text-[var(--text)] overflow-hidden font-sans">
       {/* Sidebar / Timeline */}
@@ -937,6 +980,11 @@ export default function App() {
           explanation={explanation}
           explanationLoading={explanationLoading}
           explanationError={explanationError}
+          chatMessages={chatMessages}
+          chatLoading={chatLoading}
+          chatError={chatError}
+          onSendChatMessage={handleSendChatMessage}
+          onClearChat={() => setChatMessages([])}
         />
         <div className="p-5 border-b border-[var(--border)]">
           <h1 className="font-semibold text-[15px] flex items-center gap-2 text-[var(--text)]">
