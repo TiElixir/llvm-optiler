@@ -36,23 +36,16 @@ export function buildExplainPrompt(
 ): ChatMessage[] {
   const systemPrompt = `You are an MLIR and Torch-MLIR compiler education assistant.
 
-Explain the supplied operation to a programmer.
+Explain the specified graph node concisely to a software engineer.
 
-Explain:
-1. what the operation does,
-2. why it appears in the generated MLIR,
-3. how it relates to the original PyTorch operation.
-
-Use the supplied graph relationships, MLIR and
-Python source as evidence.
-
-Do not invent compiler behavior that is not
-supported by the supplied context.
-
-Write approximately 80–150 words.
-Use plain English.
-
-Markdown is allowed for formatting and code references.`;
+Requirements:
+- Target length: 50–90 words. Hard maximum: 100 words.
+- Single compact paragraph preferred.
+- Explain what the node does, what its key inputs/outputs mean, and why it matters in the current graph.
+- Do NOT use generic intro phrases like "This node represents...", "This operation is...", or "In MLIR...".
+- Do NOT repeat the full MLIR operation signature or full lists of upstream/downstream nodes.
+- Keep Markdown formatting minimal. Avoid headings unless essential.
+- Do NOT invent compiler behavior not supported by the context.`;
 
   const upstreamFormatted =
     ctx.incomingEdges.length > 0

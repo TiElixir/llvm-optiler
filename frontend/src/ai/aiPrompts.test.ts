@@ -20,7 +20,7 @@ describe('aiPrompts', () => {
     expect(parsedPayload.nodes).toEqual(compactNodes);
   });
 
-  it('builds Explain prompt including label, node type, upstream, downstream, MLIR, and Python', () => {
+  it('builds Explain prompt explicitly specifying 50–90 words target and 100 max constraint', () => {
     const ctx: NodeContext = {
       id: 'op_linalg',
       label: '%0 = linalg.generic',
@@ -32,7 +32,9 @@ describe('aiPrompts', () => {
 
     const messages = buildExplainPrompt(ctx, 'func.func @main(...)', 'import torch');
     expect(messages).toHaveLength(2);
-    expect(messages[0].content).toContain('MLIR and Torch-MLIR compiler education assistant');
+    expect(messages[0].content).toContain('Target length: 50–90 words');
+    expect(messages[0].content).toContain('Hard maximum: 100 words');
+    expect(messages[0].content).toContain('Single compact paragraph preferred');
 
     const userContent = messages[1].content;
     expect(userContent).toContain('Node ID: op_linalg');

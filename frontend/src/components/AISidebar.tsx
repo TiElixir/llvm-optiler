@@ -1,4 +1,5 @@
 import { Sparkles, MessageSquare, X, HelpCircle, Loader2, AlertCircle } from 'lucide-react';
+import { renderMarkdown } from '../ai/markdownRenderer';
 
 interface AISidebarProps {
   isOpen: boolean;
@@ -113,9 +114,10 @@ export function AISidebar({
                   <Sparkles className="w-3.5 h-3.5 text-amber-500" />
                   <span>AI Explanation</span>
                 </div>
-                <div className="text-xs text-[var(--text)] leading-relaxed whitespace-pre-wrap font-sans">
-                  {explanation}
-                </div>
+                <div
+                  className="ai-explanation-markdown"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(explanation) }}
+                />
               </div>
             ) : explainedNodeId ? (
               <div className="rounded-lg border border-[var(--border)] p-4 bg-[var(--surface)] text-xs text-[var(--muted)]">

@@ -9,7 +9,7 @@ import { loadAIConfig, saveAIConfig, isAIConfigValid, type AIConfig } from './ai
 import { createChatCompletion } from './ai/aiClient';
 import { serializeGraphForAI, extractNodeContext } from './ai/aiContext';
 import { buildSummarisePrompt, buildExplainPrompt } from './ai/aiPrompts';
-import { parseSummariseResponse } from './ai/aiParser';
+import { parseSummariseResponse, truncateExplanation } from './ai/aiParser';
 import { AIProviderSettings } from './components/AIProviderSettings';
 import { SelectionBar } from './components/SelectionBar';
 import { AISidebar } from './components/AISidebar';
@@ -66,7 +66,44 @@ function ArithmeticNode({ data }: { data: any }) {
   );
 }
 
-const nodeTypes = { regionOp: RegionOpNode, arithmetic: ArithmeticNode };
+function DefaultNodeCustom({ data, targetPosition = Position.Top, sourcePosition = Position.Bottom }: { data: any; targetPosition?: Position; sourcePosition?: Position }) {
+  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  return (
+    <div title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
+      <Handle type="target" position={targetPosition} id="in" style={{ background: 'var(--graph-edge)' }} />
+      <span>{data.label}</span>
+      <Handle type="source" position={sourcePosition} id="result" style={{ background: 'var(--graph-edge-return)' }} />
+    </div>
+  );
+}
+
+function InputNodeCustom({ data }: { data: any }) {
+  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  return (
+    <div title={`PyTorch: ${data.pytorchName || data.label}\nMLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
+      <span>{data.label}</span>
+      <Handle type="source" position={Position.Bottom} style={{ background: 'var(--graph-edge-return)' }} />
+    </div>
+  );
+}
+
+function OutputNodeCustom({ data }: { data: any }) {
+  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  return (
+    <div title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
+      <Handle type="target" position={Position.Top} style={{ background: 'var(--graph-edge)' }} />
+      <span>{data.label}</span>
+    </div>
+  );
+}
+
+const nodeTypes = {
+  regionOp: RegionOpNode,
+  arithmetic: ArithmeticNode,
+  default: DefaultNodeCustom,
+  input: InputNodeCustom,
+  output: OutputNodeCustom,
+};
 
 const PYTORCH_BLOCK_ARG_MIN_WIDTH = 36;
 const PYTORCH_BLOCK_ARG_HORIZONTAL_PADDING = 20;
@@ -577,6 +614,9 @@ export default function App() {
     setContextMenu(null);
     setSelectedNodeIds(new Set());
     setExplainedNodeId(null);
+    setNodeSummaries({});
+    setExplanation(null);
+    setExplanationError(null);
   }, [codeContent, setNodes, setEdges]);
 
   const focusSelection = useMemo(() => {
@@ -834,7 +874,7 @@ export default function App() {
 
       const requestedIds = compactGraph.nodes.map((n) => n.id);
       const parsedSummaries = parseSummariseResponse(responseText, requestedIds);
-      setNodeSummaries((prev) => ({ ...prev, ...parsedSummaries }));
+      setNodeSummaries(parsedSummaries);
     } catch (err: any) {
       setSummariseError(err?.message || 'Failed to generate graph summaries.');
     } finally {
@@ -867,7 +907,8 @@ export default function App() {
         messages: promptMessages,
       });
 
-      setExplanation(text);
+      const safeExplanation = truncateExplanation(text, 100);
+      setExplanation(safeExplanation);
     } catch (err: any) {
       setExplanationError(err?.message || 'Failed to generate node explanation.');
     } finally {
