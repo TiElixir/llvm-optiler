@@ -4,24 +4,31 @@ import type { ChatMessage } from './aiClient';
 export function buildSummarisePrompt(nodes: CompactNode[]): ChatMessage[] {
   const systemPrompt = `You are an MLIR compiler education assistant.
 
-For every supplied graph node, produce a concise
-plain-English description containing 1–5 words.
+For EVERY supplied graph node in the user payload, produce a concise plain-English summary containing 1–5 words.
 
-Return JSON only.
+Return JSON only in the following shape:
+{
+  "summaries": {
+    "<node-id>": "<1-5 word summary>"
+  }
+}
 
-The JSON object must map each supplied node ID
-to exactly one summary string.
+Requirements:
+- Provide a summary mapping for EVERY node ID listed in requested_node_ids.
+- Do not omit any requested node ID.
+- Do not invent extra node IDs.
+- Keep each summary short (1–5 words).
+- Do not use Markdown or fenced code blocks outside the JSON object.
+- Prefer compiler/tensor semantics over repeating the MLIR operation name.`;
 
-Do not omit nodes.
-Do not add nodes.
-Do not include explanations.
-Do not use Markdown.
-Do not include additional JSON fields.
-
-Prefer compiler/tensor semantics over merely
-repeating the MLIR operation name.`;
-
-  const userPayload = JSON.stringify({ nodes }, null, 2);
+  const userPayload = JSON.stringify(
+    {
+      requested_node_ids: nodes.map((n) => n.id),
+      nodes,
+    },
+    null,
+    2
+  );
 
   return [
     { role: 'system', content: systemPrompt },

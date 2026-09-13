@@ -15,7 +15,7 @@ import { SelectionBar } from './components/SelectionBar';
 import { AISidebar } from './components/AISidebar';
 
 function RegionOpNode({ data }: { data: any }) {
-  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
   return (
     <div title={`PyTorch: ${data.label}\nMLIR: ${data.rawLabel || data.label}${summaryTooltip}`} className="relative h-full w-full rounded-xl border border-[var(--graph-container-border)] bg-[var(--graph-container-bg)] shadow-sm overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-[37px] bottom-0 flex flex-col">
@@ -47,7 +47,7 @@ function RegionOpNode({ data }: { data: any }) {
 
 function ArithmeticNode({ data }: { data: any }) {
   const orderedBinary = data.orderedBinary;
-  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
   return (
     <div className="arithmetic-node" title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
       <div className="arithmetic-node-shape">
@@ -67,7 +67,7 @@ function ArithmeticNode({ data }: { data: any }) {
 }
 
 function DefaultNodeCustom({ data, targetPosition = Position.Top, sourcePosition = Position.Bottom }: { data: any; targetPosition?: Position; sourcePosition?: Position }) {
-  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
   return (
     <div title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
       <Handle type="target" position={targetPosition} id="in" style={{ background: 'var(--graph-edge)' }} />
@@ -78,7 +78,7 @@ function DefaultNodeCustom({ data, targetPosition = Position.Top, sourcePosition
 }
 
 function InputNodeCustom({ data }: { data: any }) {
-  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
   return (
     <div title={`PyTorch: ${data.pytorchName || data.label}\nMLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
       <span>{data.label}</span>
@@ -88,7 +88,7 @@ function InputNodeCustom({ data }: { data: any }) {
 }
 
 function OutputNodeCustom({ data }: { data: any }) {
-  const summaryTooltip = data.summary ? `\nAI Summary: ${data.summary}` : '';
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
   return (
     <div title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
       <Handle type="target" position={Position.Top} style={{ background: 'var(--graph-edge)' }} />
@@ -865,7 +865,7 @@ export default function App() {
     setSummariseError(null);
 
     try {
-      const compactGraph = serializeGraphForAI(targetNodes, displayEdges);
+      const compactGraph = serializeGraphForAI(targetNodes, edges);
       const promptMessages = buildSummarisePrompt(compactGraph.nodes);
       const responseText = await createChatCompletion({
         config: aiConfig,

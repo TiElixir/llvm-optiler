@@ -39,6 +39,35 @@ describe('aiParser', () => {
     });
   });
 
+  it('handles 10+ visible nodes producing summary mappings for all valid IDs', () => {
+    const manyIds = Array.from({ length: 12 }, (_, i) => `node_${i + 1}`);
+    const summariesMap: Record<string, string> = {};
+    manyIds.forEach((id, i) => {
+      summariesMap[id] = `Summary for node ${i + 1}`;
+    });
+
+    const raw = JSON.stringify({ summaries: summariesMap });
+    const parsed = parseSummariseResponse(raw, manyIds);
+    expect(Object.keys(parsed)).toHaveLength(12);
+    manyIds.forEach((id) => {
+      expect(parsed[id]).toBeDefined();
+    });
+  });
+
+  it('preserves valid node summaries even if one summary is malformed or empty', () => {
+    const ids = ['node_1', 'node_2', 'node_3'];
+    const raw = JSON.stringify({
+      node_1: 'matrix multiplication',
+      node_2: '', // empty summary
+      node_3: null, // invalid type
+    });
+
+    const parsed = parseSummariseResponse(raw, ids);
+    expect(parsed).toEqual({
+      node_1: 'matrix multiplication',
+    });
+  });
+
   it('truncates summaries to a maximum of 5 words', () => {
     const raw = JSON.stringify({
       node_1: 'this is a very long summary string that exceeds five words',

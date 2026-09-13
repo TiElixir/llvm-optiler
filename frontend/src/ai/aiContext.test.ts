@@ -22,6 +22,12 @@ describe('aiContext', () => {
       position: { x: 0, y: 0 },
       data: { label: '%in', rawLabel: '%in', isBlockArg: true },
     },
+    {
+      id: 'node_no_meta',
+      type: 'default',
+      position: { x: 0, y: 0 },
+      data: { label: 'fallback_label' }, // missing rawLabel and rawOp
+    },
   ];
 
   const edges: Edge[] = [
@@ -37,12 +43,19 @@ describe('aiContext', () => {
 
   it('serializes graph context using rawLabel and node classification', () => {
     const serialized = serializeGraphForAI(nodes, edges);
-    expect(serialized.nodes).toHaveLength(3);
+    expect(serialized.nodes).toHaveLength(4);
     expect(serialized.nodes[0].label).toBe('%arg0');
     expect(serialized.nodes[0].type).toBe('function argument');
     expect(serialized.nodes[1].label).toBe('%0 = linalg.generic');
     expect(serialized.nodes[1].type).toBe('region container');
     expect(serialized.edges).toHaveLength(2);
+  });
+
+  it('falls back safely to label or node ID when optional metadata like rawLabel/rawOp is missing', () => {
+    const serialized = serializeGraphForAI([nodes[3]], []);
+    expect(serialized.nodes).toHaveLength(1);
+    expect(serialized.nodes[0].id).toBe('node_no_meta');
+    expect(serialized.nodes[0].label).toBe('fallback_label');
   });
 
   it('extracts node context with upstream and downstream edges', () => {
