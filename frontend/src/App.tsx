@@ -2,13 +2,22 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { ReactFlow, Background, Controls, Handle, Position, useNodesState, useEdgesState, type Node, type Edge, type NodeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { FileCode, Activity, Maximize2, Play, Code2, Sun, Moon, Minimize2 } from 'lucide-react';
+import { FileCode, Activity, Maximize2, Play, Code2, Sun, Moon, Minimize2, Sparkles, Settings, Loader2, AlertCircle, X } from 'lucide-react';
 import { parseMLIRToGraph, extractPyTorchArgsFromPython } from './mlirParser';
 import { buildPyTorchDisplayMaps, type SourceMetadata } from './sourceMapping';
+import { loadAIConfig, saveAIConfig, isAIConfigValid, type AIConfig } from './ai/aiConfig';
+import { createChatCompletion } from './ai/aiClient';
+import { serializeGraphForAI, extractNodeContext } from './ai/aiContext';
+import { buildSummarisePrompt, buildExplainPrompt, buildChatPrompt } from './ai/aiPrompts';
+import { parseSummariseResponse, truncateExplanation } from './ai/aiParser';
+import { AIProviderSettings } from './components/AIProviderSettings';
+import { SelectionBar } from './components/SelectionBar';
+import { AISidebar, type ChatMessageItem } from './components/AISidebar';
 
 function RegionOpNode({ data }: { data: any }) {
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
   return (
-    <div title={`PyTorch: ${data.label}\nMLIR: ${data.rawLabel || data.label}`} className="relative h-full w-full rounded-xl border border-[var(--graph-container-border)] bg-[var(--graph-container-bg)] shadow-sm overflow-hidden">
+    <div title={`PyTorch: ${data.label}\nMLIR: ${data.rawLabel || data.label}${summaryTooltip}`} className="relative h-full w-full rounded-xl border border-[var(--graph-container-border)] bg-[var(--graph-container-bg)] shadow-sm overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-[37px] bottom-0 flex flex-col">
         {data.inputZoneCount > 0 && <div className="h-[70px] shrink-0 border-b border-[var(--graph-input-zone-border)] bg-[var(--graph-input-zone-bg)]" />}
         <div className="min-h-0 flex-1 bg-[var(--graph-container-inner)]" />
@@ -38,8 +47,9 @@ function RegionOpNode({ data }: { data: any }) {
 
 function ArithmeticNode({ data }: { data: any }) {
   const orderedBinary = data.orderedBinary;
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
   return (
-    <div className="arithmetic-node" title={`MLIR: ${data.rawLabel || data.label}`}>
+    <div className="arithmetic-node" title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
       <div className="arithmetic-node-shape">
         <span>{data.label}</span>
       </div>
@@ -56,7 +66,44 @@ function ArithmeticNode({ data }: { data: any }) {
   );
 }
 
-const nodeTypes = { regionOp: RegionOpNode, arithmetic: ArithmeticNode };
+function DefaultNodeCustom({ data, targetPosition = Position.Top, sourcePosition = Position.Bottom }: { data: any; targetPosition?: Position; sourcePosition?: Position }) {
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
+  return (
+    <div title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
+      <Handle type="target" position={targetPosition} id="in" style={{ background: 'var(--graph-edge)' }} />
+      <span>{data.label}</span>
+      <Handle type="source" position={sourcePosition} id="result" style={{ background: 'var(--graph-edge-return)' }} />
+    </div>
+  );
+}
+
+function InputNodeCustom({ data }: { data: any }) {
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
+  return (
+    <div title={`PyTorch: ${data.pytorchName || data.label}\nMLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
+      <span>{data.label}</span>
+      <Handle type="source" position={Position.Bottom} style={{ background: 'var(--graph-edge-return)' }} />
+    </div>
+  );
+}
+
+function OutputNodeCustom({ data }: { data: any }) {
+  const summaryTooltip = data.summary ? `\nSummary: ${data.summary}` : '';
+  return (
+    <div title={`MLIR: ${data.rawLabel || data.label}${summaryTooltip}`}>
+      <Handle type="target" position={Position.Top} style={{ background: 'var(--graph-edge)' }} />
+      <span>{data.label}</span>
+    </div>
+  );
+}
+
+const nodeTypes = {
+  regionOp: RegionOpNode,
+  arithmetic: ArithmeticNode,
+  default: DefaultNodeCustom,
+  input: InputNodeCustom,
+  output: OutputNodeCustom,
+};
 
 const PYTORCH_BLOCK_ARG_MIN_WIDTH = 36;
 const PYTORCH_BLOCK_ARG_HORIZONTAL_PADDING = 20;
@@ -375,11 +422,31 @@ export default function App() {
   const [tracedNodeId, setTracedNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
 
+  const [aiConfig, setAiConfig] = useState<AIConfig>(loadAIConfig);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [isAISidebarOpen, setIsAISidebarOpen] = useState<boolean>(false);
+  const [aiSidebarTab, setAiSidebarTab] = useState<'explain' | 'chat'>('explain');
+  const [explainedNodeId, setExplainedNodeId] = useState<string | null>(null);
+
+  const [nodeSummaries, setNodeSummaries] = useState<Record<string, string>>({});
+  const [isSummarising, setIsSummarising] = useState<boolean>(false);
+  const [summariseError, setSummariseError] = useState<string | null>(null);
+
+  const [explanation, setExplanation] = useState<string | null>(null);
+  const [explanationLoading, setExplanationLoading] = useState<boolean>(false);
+  const [explanationError, setExplanationError] = useState<string | null>(null);
+
+  const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([]);
+  const [chatLoading, setChatLoading] = useState<boolean>(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+
   useEffect(() => {
     const clearTraceOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setTracedNodeId(null);
         setContextMenu(null);
+        setSelectedNodeIds(new Set());
       }
     };
     document.addEventListener('keydown', clearTraceOnEscape);
@@ -404,6 +471,7 @@ export default function App() {
 
   const displayNodes = useMemo(() => {
     const mappedNodes = nodes.map((node: Node<any>) => {
+      const summary = nodeSummaries[node.id];
       // 1. Function Arguments (%arg0, %arg1, ...)
       if (node.type === 'input' || node.data?.isFuncArg) {
         const idx = node.data.argIndex ?? 0;
@@ -412,7 +480,7 @@ export default function App() {
         const displayLabel = showPyTorchNames && ptName ? ptName : rawLabel;
         return {
           ...node,
-          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: ptName },
+          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: ptName, summary },
           style: { ...node.style, width: 'auto', minWidth: '36px', textAlign: 'center' as const },
         };
       }
@@ -426,7 +494,7 @@ export default function App() {
         const displayLabel = showPyTorchNames && inheritedName ? inheritedName : rawLabel;
         return {
           ...node,
-          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: inheritedName },
+          data: { ...node.data, rawLabel, label: displayLabel, pytorchName: inheritedName, summary },
           style: showPyTorchNames
             ? { ...node.style, width: pytorchBlockArgWidth(displayLabel), minWidth: PYTORCH_BLOCK_ARG_MIN_WIDTH, textAlign: 'center' as const, whiteSpace: 'nowrap' }
             : node.style,
@@ -437,7 +505,7 @@ export default function App() {
       // using the concise operation name in PyTorch Names mode.
       if (node.data?.isYield) {
         const rawLabel = String(node.data.rawLabel || node.data.label);
-        return { ...node, data: { ...node.data, rawLabel, label: showPyTorchNames ? 'yield' : rawLabel } };
+        return { ...node, data: { ...node.data, rawLabel, label: showPyTorchNames ? 'yield' : rawLabel, summary } };
       }
 
       // 3. Region container nodes (linalg.generic, etc.)
@@ -455,6 +523,7 @@ export default function App() {
             isComposite,
             collapsed: isComposite && collapsedCompositeIds.has(node.id),
             onToggleCollapse: () => toggleComposite(node.id),
+            summary,
           },
           style: isComposite && collapsedCompositeIds.has(node.id)
             ? { ...node.style, height: 116 }
@@ -468,41 +537,41 @@ export default function App() {
         const arithmeticSymbol = ARITHMETIC_SYMBOLS[node.data.rawOp as string] || node.data.arithOp;
         const isArithmetic = Boolean(arithmeticSymbol);
         if (isArithmetic && showPyTorchNames) {
-          return { ...node, type: 'arithmetic', data: { ...node.data, rawLabel, label: arithmeticSymbol } };
+          return { ...node, type: 'arithmetic', data: { ...node.data, rawLabel, label: arithmeticSymbol, summary } };
         }
         if (showPyTorchNames) {
           const semanticOperationLabel = PYTORCH_OPERATION_LABELS[node.data.rawOp as string];
           if (semanticOperationLabel) {
             return {
               ...node,
-              data: { ...node.data, rawLabel, label: semanticOperationLabel },
+              data: { ...node.data, rawLabel, label: semanticOperationLabel, summary },
               className: node.data.rawOp === 'tensor.empty' ? 'tensor-empty-node' : 'function-operation-node',
             };
           }
           const sourceLabel = opLabelMap[node.id];
           if (sourceLabel) {
-            return { ...node, data: { ...node.data, rawLabel, label: sourceLabel } };
+            return { ...node, data: { ...node.data, rawLabel, label: sourceLabel, summary } };
           }
           if (node.data.arithOp) {
-            return { ...node, data: { ...node.data, rawLabel, label: node.data.arithOp } };
+            return { ...node, data: { ...node.data, rawLabel, label: node.data.arithOp, summary } };
           }
           if (node.data.constValue != null) {
-            return { ...node, data: { ...node.data, rawLabel, label: String(node.data.constValue) } };
+            return { ...node, data: { ...node.data, rawLabel, label: String(node.data.constValue), summary } };
           }
           const mlirResults: string[] = Array.isArray(node.data.mlirResults) ? node.data.mlirResults : [];
           const resultName = mlirResults.map((r: string) => ssaMap[r]).find(Boolean);
           if (resultName) {
             const shortOp = (node.data.rawOp as string).split('.').pop() ?? node.data.rawOp;
-            return { ...node, data: { ...node.data, rawLabel, label: `${resultName} = ${shortOp}` } };
+            return { ...node, data: { ...node.data, rawLabel, label: `${resultName} = ${shortOp}`, summary } };
           }
         }
-        return { ...node, type: 'default', data: { ...node.data, rawLabel, label: rawLabel } };
+        return { ...node, type: 'default', data: { ...node.data, rawLabel, label: rawLabel, summary } };
       }
 
-      return node;
+      return { ...node, data: { ...node.data, summary } };
     });
     return showPyTorchNames ? redistributePyTorchBlockArgs(mappedNodes) : mappedNodes;
-  }, [nodes, showPyTorchNames, pytorchArgs, ssaMap, opLabelMap, compositeNodeIds, collapsedCompositeIds]);
+  }, [nodes, showPyTorchNames, pytorchArgs, ssaMap, opLabelMap, compositeNodeIds, collapsedCompositeIds, nodeSummaries]);
 
   const displayEdges = useMemo(() => {
     const collapsed = new Set(compositeNodeIds.filter(id => collapsedCompositeIds.has(id)));
@@ -547,6 +616,14 @@ export default function App() {
     setFocusedNodeId(null);
     setTracedNodeId(null);
     setContextMenu(null);
+    setSelectedNodeIds(new Set());
+    setExplainedNodeId(null);
+    setNodeSummaries({});
+    setExplanation(null);
+    setExplanationError(null);
+    setChatMessages([]);
+    setChatLoading(false);
+    setChatError(null);
   }, [codeContent, setNodes, setEdges]);
 
   const focusSelection = useMemo(() => {
@@ -654,35 +731,96 @@ export default function App() {
   }, [tracedNodeId, traceSelection.tracedIds, nodes, collapsedCompositeIds]);
 
   const focusedNodes = useMemo(() => visibleNodes.map((node) => {
-    if (!focusedNodeId && !tracedNodeId) return node;
+    const isMultiSelected = selectedNodeIds.has(node.id);
+    const isExplained = node.id === explainedNodeId;
+
+    if (!focusedNodeId && !tracedNodeId && !isMultiSelected && !isExplained) return node;
+
     if (tracedNodeId) {
       const isTraced = traceVisibleNodeIds.has(node.id);
       return {
         ...node,
         style: {
           ...node.style,
-          opacity: isTraced ? 1 : 0.18,
-          outline: node.id === tracedNodeId ? '3px solid var(--graph-trace)' : undefined,
-          outlineOffset: node.id === tracedNodeId ? '2px' : undefined,
-          boxShadow: node.id === tracedNodeId ? '0 0 0 5px var(--graph-trace-ring), 0 8px 20px var(--graph-trace-shadow)' : node.style?.boxShadow,
+          opacity: isTraced || isMultiSelected || isExplained ? 1 : 0.18,
+          outline: node.id === tracedNodeId
+            ? '3px solid var(--graph-trace)'
+            : isExplained
+              ? '3px solid var(--graph-explain)'
+              : isMultiSelected
+                ? '3px solid var(--graph-select)'
+                : undefined,
+          outlineOffset: (node.id === tracedNodeId || isExplained || isMultiSelected) ? '2px' : undefined,
+          boxShadow: node.id === tracedNodeId
+            ? '0 0 0 5px var(--graph-trace-ring), 0 8px 20px var(--graph-trace-shadow)'
+            : isExplained
+              ? '0 0 0 5px var(--graph-explain-ring), 0 8px 20px var(--graph-explain-shadow)'
+              : isMultiSelected
+                ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
+                : node.style?.boxShadow,
           transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
         },
       };
     }
-    const isFocused = focusSelection.selectedIds.has(node.id);
-    const isContext = focusSelection.contextIds.has(node.id);
-    return {
-      ...node,
-      style: {
-        ...node.style,
-        opacity: isFocused ? 1 : isContext ? 0.58 : 0.18,
-        outline: node.id === focusedNodeId ? '3px solid var(--graph-focus)' : undefined,
-        outlineOffset: node.id === focusedNodeId ? '2px' : undefined,
-        boxShadow: node.id === focusedNodeId ? '0 0 0 5px var(--graph-focus-ring), 0 8px 20px var(--graph-focus-shadow)' : node.style?.boxShadow,
-        transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
-      },
-    };
-  }), [visibleNodes, focusedNodeId, tracedNodeId, traceVisibleNodeIds, focusSelection]);
+
+    if (focusedNodeId) {
+      const isFocused = focusSelection.selectedIds.has(node.id);
+      const isContext = focusSelection.contextIds.has(node.id);
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: isFocused || isMultiSelected || isExplained ? 1 : isContext ? 0.58 : 0.18,
+          outline: node.id === focusedNodeId
+            ? '3px solid var(--graph-focus)'
+            : isExplained
+              ? '3px solid var(--graph-explain)'
+              : isMultiSelected
+                ? '3px solid var(--graph-select)'
+                : undefined,
+          outlineOffset: (node.id === focusedNodeId || isExplained || isMultiSelected) ? '2px' : undefined,
+          boxShadow: node.id === focusedNodeId
+            ? '0 0 0 5px var(--graph-focus-ring), 0 8px 20px var(--graph-focus-shadow)'
+            : isExplained
+              ? '0 0 0 5px var(--graph-explain-ring), 0 8px 20px var(--graph-explain-shadow)'
+              : isMultiSelected
+                ? '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)'
+                : node.style?.boxShadow,
+          transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
+        },
+      };
+    }
+
+    if (isExplained) {
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: 1,
+          outline: '3px solid var(--graph-explain)',
+          outlineOffset: '2px',
+          boxShadow: '0 0 0 5px var(--graph-explain-ring), 0 8px 20px var(--graph-explain-shadow)',
+          transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
+        },
+      };
+    }
+
+    if (isMultiSelected) {
+      return {
+        ...node,
+        style: {
+          ...node.style,
+          opacity: 1,
+          outline: '3px solid var(--graph-select)',
+          outlineOffset: '2px',
+          boxShadow: '0 0 0 5px var(--graph-select-ring), 0 8px 20px var(--graph-select-shadow)',
+          transition: 'opacity 180ms ease, box-shadow 180ms ease, outline 180ms ease',
+        },
+      };
+    }
+
+    return node;
+  }), [visibleNodes, focusedNodeId, tracedNodeId, traceVisibleNodeIds, focusSelection, selectedNodeIds, explainedNodeId]);
 
   const focusedEdges = useMemo(() => displayEdges.map((edge) => {
     if (!focusedNodeId && !tracedNodeId) {
@@ -716,10 +854,138 @@ export default function App() {
     };
   }), [displayEdges, focusedNodeId, tracedNodeId, traceSelection.tracedEdgeIds, focusSelection]);
 
+  const handleSummariseClick = async () => {
+    if (!isAIConfigValid(aiConfig)) {
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    if (isSummarising) return;
+
+    const targetNodes = visibleNodes.filter(
+      (n) => !n.hidden && !n.data?.isConstantsGroup && !n.data?.isInputsGroup && !n.data?.isOutputsGroup
+    );
+
+    if (targetNodes.length === 0) return;
+
+    setIsSummarising(true);
+    setSummariseError(null);
+
+    try {
+      const compactGraph = serializeGraphForAI(targetNodes, edges);
+      const promptMessages = buildSummarisePrompt(compactGraph.nodes);
+      const responseText = await createChatCompletion({
+        config: aiConfig,
+        messages: promptMessages,
+      });
+
+      const requestedIds = compactGraph.nodes.map((n) => n.id);
+      const parsedSummaries = parseSummariseResponse(responseText, requestedIds);
+      setNodeSummaries(parsedSummaries);
+    } catch (err: any) {
+      setSummariseError(err?.message || 'Failed to generate graph summaries.');
+    } finally {
+      setIsSummarising(false);
+    }
+  };
+
+  const handleExplainNode = async (nodeId: string) => {
+    if (!isAIConfigValid(aiConfig)) {
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    setExplainedNodeId(nodeId);
+    setExplanation(null);
+    setExplanationError(null);
+    setExplanationLoading(true);
+    setIsAISidebarOpen(true);
+    setAiSidebarTab('explain');
+
+    try {
+      const ctx = extractNodeContext(nodeId, nodes, edges);
+      if (!ctx) {
+        throw new Error(`Node ${nodeId} was not found in graph context.`);
+      }
+
+      const promptMessages = buildExplainPrompt(ctx, codeContent, pythonCode);
+      const text = await createChatCompletion({
+        config: aiConfig,
+        messages: promptMessages,
+      });
+
+      const safeExplanation = truncateExplanation(text, 100);
+      setExplanation(safeExplanation);
+    } catch (err: any) {
+      setExplanationError(err?.message || 'Failed to generate node explanation.');
+    } finally {
+      setExplanationLoading(false);
+    }
+  };
+
+  const handleSendChatMessage = async (userText: string) => {
+    if (!isAIConfigValid(aiConfig)) {
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    const newUserMsg: ChatMessageItem = { role: 'user', content: userText };
+    const updatedMessages = [...chatMessages, newUserMsg];
+    setChatMessages(updatedMessages);
+    setChatLoading(true);
+    setChatError(null);
+
+    try {
+      const graphContext = serializeGraphForAI(nodes, edges);
+      const promptMessages = buildChatPrompt(
+        codeContent,
+        pythonCode,
+        graphContext,
+        chatMessages,
+        userText
+      );
+
+      const responseText = await createChatCompletion({
+        config: aiConfig,
+        messages: promptMessages,
+      });
+
+      const assistantMsg: ChatMessageItem = { role: 'assistant', content: responseText };
+      setChatMessages([...updatedMessages, assistantMsg]);
+    } catch (err: any) {
+      setChatError(err?.message || 'Failed to get a response from the AI agent.');
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   return (
     <div data-theme={isDarkMode ? 'dark' : 'light'} className="app-shell flex h-screen w-full bg-[var(--app-bg)] text-[var(--text)] overflow-hidden font-sans">
       {/* Sidebar / Timeline */}
-      <div className={`${isFullscreen ? 'hidden' : 'flex'} w-[320px] border-r border-[var(--border)] bg-[var(--surface)] flex-col h-full shrink-0`}>
+      <div className={`${isFullscreen ? 'hidden' : 'flex'} w-[320px] border-r border-[var(--border)] bg-[var(--surface)] flex-col h-full shrink-0 relative`}>
+        <AISidebar
+          isOpen={isAISidebarOpen}
+          onClose={() => {
+            setIsAISidebarOpen(false);
+            setExplainedNodeId(null);
+          }}
+          activeTab={aiSidebarTab}
+          onTabChange={setAiSidebarTab}
+          explainedNodeId={explainedNodeId}
+          explainedNodeLabel={
+            explainedNodeId
+              ? (displayNodes.find((n) => n.id === explainedNodeId)?.data?.rawLabel as string || explainedNodeId)
+              : undefined
+          }
+          explanation={explanation}
+          explanationLoading={explanationLoading}
+          explanationError={explanationError}
+          chatMessages={chatMessages}
+          chatLoading={chatLoading}
+          chatError={chatError}
+          onSendChatMessage={handleSendChatMessage}
+          onClearChat={() => setChatMessages([])}
+        />
         <div className="p-5 border-b border-[var(--border)]">
           <h1 className="font-semibold text-[15px] flex items-center gap-2 text-[var(--text)]">
              <Activity className="w-[18px] h-[18px] text-[var(--muted)]" />
@@ -849,33 +1115,84 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <label
                     title="Show original PyTorch forward parameter names alongside MLIR argument names."
-                     className="flex items-center gap-2 text-xs text-[var(--muted-strong)] font-medium cursor-pointer select-none"
+                    className="flex items-center gap-2 text-xs text-[var(--muted-strong)] font-medium cursor-pointer select-none"
                   >
                     <input
                       type="checkbox"
                       checked={showPyTorchNames}
                       onChange={(e) => setShowPyTorchNames(e.target.checked)}
-                       className="rounded border-[var(--control-border)] text-[var(--button-bg)] focus:ring-[var(--button-bg)] h-3.5 w-3.5"
+                      className="rounded border-[var(--control-border)] text-[var(--button-bg)] focus:ring-[var(--button-bg)] h-3.5 w-3.5"
                     />
                     Show PyTorch Names
                   </label>
-                   <button onClick={() => setIsDarkMode((dark) => !dark)} aria-label={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} title={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} className="p-1.5 rounded-md text-[var(--muted-strong)] hover:bg-[var(--control-hover)] transition-colors">
-                     {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                   </button>
-                   <button onClick={() => setIsFullscreen((fullscreen) => !fullscreen)} className="text-xs px-2 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors">
-                     {isFullscreen ? 'Exit graph fullscreen' : 'Fullscreen graph'}
-                   </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSummariseClick}
+                    disabled={isSummarising}
+                    title="AI Node Summaries"
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors disabled:opacity-50"
+                  >
+                    {isSummarising ? (
+                      <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                    )}
+                    {isSummarising ? 'Summarising...' : 'Summarise'}
+                  </button>
+
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsSettingsOpen((prev) => !prev)}
+                      title="AI Provider Settings"
+                      aria-label="AI Provider Settings"
+                      className="p-1.5 rounded-md text-[var(--muted-strong)] hover:bg-[var(--control-hover)] transition-colors"
+                    >
+                      <Settings className="w-4 h-4" />
+                    </button>
+                    <AIProviderSettings
+                      key={isSettingsOpen ? 'open' : 'closed'}
+                      isOpen={isSettingsOpen}
+                      onClose={() => setIsSettingsOpen(false)}
+                      config={aiConfig}
+                      onSave={(newCfg) => {
+                        setAiConfig(newCfg);
+                        saveAIConfig(newCfg);
+                      }}
+                    />
+                  </div>
+
+                  <button onClick={() => setIsDarkMode((dark) => !dark)} aria-label={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} title={`Switch to ${isDarkMode ? 'light' : 'dark'} mode`} className="p-1.5 rounded-md text-[var(--muted-strong)] hover:bg-[var(--control-hover)] transition-colors">
+                    {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                  </button>
+                  <button onClick={() => setIsFullscreen((fullscreen) => !fullscreen)} className="text-xs px-2 py-1 rounded bg-[var(--control-bg)] hover:bg-[var(--control-hover)] text-[var(--muted-strong)] font-medium transition-colors">
+                    {isFullscreen ? 'Exit graph fullscreen' : 'Fullscreen graph'}
+                  </button>
                 </div>
               </div>
               <div className="flex-1 w-full h-full">
                 <ReactFlow 
-        nodes={focusedNodes}
-        edges={focusedEdges}
-                   onNodesChange={onConstrainedNodesChange}
-                   onEdgesChange={onEdgesChange}
-                  onNodeClick={(_, node) => {
+                  nodes={focusedNodes}
+                  edges={focusedEdges}
+                  onNodesChange={onConstrainedNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onNodeClick={(event, node) => {
                     setContextMenu(null);
-                    setFocusedNodeId((current) => current === node.id ? null : node.id);
+                    if (event.ctrlKey || event.metaKey) {
+                      setSelectedNodeIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(node.id)) {
+                          next.delete(node.id);
+                        } else {
+                          next.add(node.id);
+                        }
+                        return next;
+                      });
+                    } else {
+                      setSelectedNodeIds(new Set());
+                      setFocusedNodeId((current) => current === node.id ? null : node.id);
+                    }
                   }}
                   onNodeContextMenu={(event, node) => {
                     event.preventDefault();
@@ -885,6 +1202,7 @@ export default function App() {
                     setFocusedNodeId(null);
                     setTracedNodeId(null);
                     setContextMenu(null);
+                    setSelectedNodeIds(new Set());
                   }}
                   nodeTypes={nodeTypes} 
                   fitView
@@ -892,6 +1210,25 @@ export default function App() {
                    <Background color="var(--graph-grid)" gap={16} />
                    <Controls className="graph-controls !border-[var(--border)] !shadow-sm" showInteractive={false} />
                 </ReactFlow>
+                {summariseError && (
+                  <div className="absolute top-14 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--graph-output-border)] bg-[var(--graph-output-bg)] text-[var(--graph-output-zone-text)] text-xs shadow-md">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span className="font-medium">{summariseError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSummariseError(null)}
+                      className="ml-1 p-0.5 rounded hover:bg-black/10 transition-colors"
+                      title="Dismiss"
+                      aria-label="Dismiss"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+                <SelectionBar
+                  selectedCount={selectedNodeIds.size}
+                  onClear={() => setSelectedNodeIds(new Set())}
+                />
                 {contextMenu && (
                   <div
                     className="fixed z-[100] min-w-28 rounded-md border border-[var(--border)] bg-[var(--surface)] p-1 shadow-lg"
@@ -908,6 +1245,16 @@ export default function App() {
                       }}
                     >
                       Trace
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full rounded px-3 py-1.5 text-left text-xs font-medium text-[var(--text)] hover:bg-[var(--control-hover)]"
+                      onClick={() => {
+                        handleExplainNode(contextMenu.nodeId);
+                        setContextMenu(null);
+                      }}
+                    >
+                      Explain
                     </button>
                   </div>
                 )}

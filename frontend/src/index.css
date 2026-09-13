@@ -58,6 +58,12 @@
   --graph-trace: #c2410c;
   --graph-trace-ring: rgba(249, 115, 22, 0.22);
   --graph-trace-shadow: rgba(194, 65, 12, 0.28);
+  --graph-select: #2563eb;
+  --graph-select-ring: rgba(37, 99, 235, 0.22);
+  --graph-select-shadow: rgba(37, 99, 235, 0.28);
+  --graph-explain: #8b5cf6;
+  --graph-explain-ring: rgba(139, 92, 246, 0.22);
+  --graph-explain-shadow: rgba(139, 92, 246, 0.28);
 }
 
 [data-theme='dark'] {
@@ -112,6 +118,12 @@
   --graph-trace: #fb923c;
   --graph-trace-ring: rgba(249, 115, 22, 0.3);
   --graph-trace-shadow: rgba(234, 88, 12, 0.38);
+  --graph-select: #60a5fa;
+  --graph-select-ring: rgba(96, 165, 250, 0.25);
+  --graph-select-shadow: rgba(59, 130, 246, 0.35);
+  --graph-explain: #c084fc;
+  --graph-explain-ring: rgba(192, 132, 252, 0.25);
+  --graph-explain-shadow: rgba(168, 85, 247, 0.35);
 }
 
 body {
@@ -157,3 +169,84 @@ button, input { font: inherit; }
 }
 .arithmetic-node-shape span { transform: rotate(-45deg); color: #fffaf7; font: 600 18px var(--font-mono); }
 .arithmetic-node > .react-flow__handle { z-index: 2; }
+
+/* AI Explanation Markdown Styles */
+.ai-explanation-markdown {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.ai-explanation-markdown p {
+  margin-bottom: 0.6rem;
+}
+.ai-explanation-markdown p:last-child {
+  margin-bottom: 0;
+}
+.ai-explanation-markdown h1,
+.ai-explanation-markdown h2,
+.ai-explanation-markdown h3,
+.ai-explanation-markdown h4 {
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.35rem;
+  color: var(--text);
+}
+.ai-explanation-markdown ul,
+.ai-explanation-markdown ol {
+  margin-left: 1.25rem;
+  margin-bottom: 0.6rem;
+  list-style-type: disc;
+}
+.ai-explanation-markdown ol {
+  list-style-type: decimal;
+}
+.ai-explanation-markdown li {
+  margin-bottom: 0.2rem;
+}
+.ai-explanation-markdown strong {
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-explanation-markdown em {
+  font-style: italic;
+}
+.ai-explanation-markdown code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  color: var(--text);
+}
+.ai-explanation-markdown pre {
+  background: var(--editor-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem;
+  overflow-x: auto;
+  margin-top: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+.ai-explanation-markdown pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  display: block;
+}
+.ai-explanation-markdown .token-keyword {
+  color: #3b82f6;
+  font-weight: 600;
+}
+.ai-explanation-markdown .token-ssa {
+  color: #10b981;
+}
+.ai-explanation-markdown .token-comment {
+  color: var(--muted);
+  font-style: italic;
+}
+.ai-explanation-markdown .token-string {
+  color: #f59e0b;
+}
