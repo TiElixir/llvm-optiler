@@ -382,7 +382,7 @@ def test_e2e_events_stream(e2e):
     assert events[1]["phase"] == "capture"
     assert events[-1]["type"] == "done"
     phases = [e["phase"] for e in events]
-    for p in ("import", "passes", "build", "benchmark", "analyze"):
+    for p in ("import", "passes", "build", "provenance", "benchmark", "analyze"):
         assert p in phases
     passes = [e for e in events if e["phase"] == "passes"]
     assert passes[-1]["n"] == passes[-1]["total"] and passes[0]["name"]
@@ -390,6 +390,27 @@ def test_e2e_events_stream(e2e):
 
 @pytest.mark.slow
 def test_e2e_stage_endpoint_points_at_last_snapshot(e2e):
+    """The stage's op table belongs to its last real snapshot (instrumentation passes come after it)."""
+    kinds = {s["idx"]: s["kind"] for s in e2e.run["snapshots"]}
     for st in e2e.run["stages"]:
         r = e2e.client.get(f"/api/runs/{e2e.id}/stages/{st['id']}").json()
-        assert r["snapshot_idx"] == (max(st["snapshot_idxs"]) if st["snapshot_idxs"] else None)
+        real = [i for i in st["snapshot_idxs"] if kinds[i] != "instrumentation"]
+        assert r["snapshot_idx"] == (max(real) if real else None), st["id"]
+
+
+@pytest.mark.slow
+def test_e2e_stage_ops_links_and_coverage(e2e):
+    run = e2e.client.get(f"/api/runs/{e2e.id}").json()
+    prev_ids: set[str] = set()
+    for st in run["stages"]:
+        r = e2e.client.get(f"/api/runs/{e2e.id}/stages/{st['id']}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ops"], st["id"]
+        assert body["exact_lineage_pct"] is not None
+        assert st["exact_lineage_pct"] == pytest.approx(body["exact_lineage_pct"])
+        for link in body["links"]:
+            assert link["from_op"] in prev_ids
+        prev_ids = {o["id"] for o in body["ops"]}
+        assert all(o["source_lines"] == ([o["source_line"]] if o["source_line"] and len(o["source_lines"]) == 1
+                                         else o["source_lines"]) for o in body["ops"])

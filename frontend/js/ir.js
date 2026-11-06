@@ -86,11 +86,12 @@ export function highlightLine(flavour, line) {
 }
 
 /** Whole text -> { gutter, html } for the two-column code view. */
-export function renderCode(flavour, text) {
+export function renderCode(flavour, text, highlighted = []) {
   const lines = text.split("\n");
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  const hl = new Set(highlighted);
   return {
-    gutter: lines.map((_, i) => i + 1).join("\n"),
-    html: lines.map((l, i) => `<span class="l" data-n="${i + 1}">${highlightLine(flavour, l)}</span>`).join("\n"),
+    gutter: lines.map((_, i) => `<span class="${hl.has(i + 1) ? "hl" : ""}">${i + 1}</span>`).join(""),
+    html: lines.map((l, i) => `<span class="l${hl.has(i + 1) ? " hl" : ""}" data-n="${i + 1}">${highlightLine(flavour, l) || " "}</span>`).join(""),
   };
 }

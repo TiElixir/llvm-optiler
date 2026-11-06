@@ -83,6 +83,9 @@ def run_job(store: RunStore, run_id: str) -> None:
         run.inputs_spec, run.output_spec = meta["inputs"], meta["output"]
         run.snapshots = [snapshot_model(r) for r in out["records"]]
         run.stages = build_stages(run.snapshots)
+        for st in run.stages:
+            so = out["provenance"].get(st.id)
+            st.exact_lineage_pct = so.exact_lineage_pct if so else None
         run.fx_nodes = [FxNode(**n) for n in json.loads((d / "capture" / "fx_nodes.json").read_text())]
         run.metrics = metrics_from_bench(out["bench"], run)
         run.toolchain = {k: v for k, v in toolchain_report().items() if k not in ("tools",)}

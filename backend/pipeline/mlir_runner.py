@@ -105,6 +105,7 @@ def run_mlir_pipeline(
     config: PipelineConfig,
     out_dir: Path,
     on_pass: Callable[[int, int, str], None] | None = None,
+    stage_hook: Callable[[str, SnapshotRecord, ir.Module], None] | None = None,
 ) -> list[SnapshotRecord]:
     """Run ``config`` on ``module`` in place. Returns one record per snapshot."""
     ctx = module.context
@@ -140,6 +141,8 @@ def run_mlir_pipeline(
                        pass_text=leaf, composite=composite, time_ms=dt)
         records.append(rec)
         prev = rec.sha1
+        if stage_hook and (n == len(plan) or plan[n][0] != stage):  # last pass of this stage
+            stage_hook(stage, rec, module)
     return records
 
 
@@ -170,7 +173,8 @@ def run_infrastructure_tail(
     res = TailResult(anchor_path=str(anchor.relative_to(out_dir)))
     prev = None
     for k, spec in enumerate([
-        f"snapshot-op-locations{{filename={anchor}}}",
+        # same options as provenance.mlir_ops.collect_stage, so anchor lines == snapshot text lines
+        f"snapshot-op-locations{{filename={anchor} print-debuginfo=true}}",
         "ensure-debug-info-scope-on-llvm-func{emission-kind=LineTablesOnly}",
     ]):
         t0 = time.perf_counter()

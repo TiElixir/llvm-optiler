@@ -25,6 +25,7 @@ from backend.schemas import (
     CreateRunRequest, CreateRunResponse, DiffResult, ProgressEvent, Run, RunSettings, RunSummary,
     SnapshotText, StageOps, TemplateInfo, TemplateSource,
 )
+from backend.provenance.build import read_stage
 from backend.store.runs import DEFAULT_RUNS_DIR, ROOT, RunNotFound, RunStore
 from backend.toolchain import toolchain_report
 
@@ -262,10 +263,12 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
     def get_stage(run_id: str, stage: str) -> StageOps:
         if stage not in STAGES:
             raise HTTPException(404, f"unknown stage {stage!r}")
-        run = get_store().get(run_id)
+        store = get_store()
+        run = store.get(run_id)
+        so = read_stage(store.run_dir(run_id), stage)  # written at the end of the compile (provenance/)
+        if so is not None:
+            return so
         idxs = [s.idx for s in run.snapshots if s.stage == stage]
-        # M3: fill ops (parsed from the stage's last snapshot), links from the previous
-        # stage and exact_lineage_pct; until then the stage is listed without ops.
         return StageOps(stage=stage, snapshot_idx=max(idxs) if idxs else None,
                         ops=[], links=[], exact_lineage_pct=None)
 

@@ -13,7 +13,7 @@ StageId = Literal["source", "torch", "linalg_tensor", "linalg_buffer", "loops",
                   "llvm_dialect", "llvm_ir", "asm"]
 RunStatus = Literal["queued", "running", "done", "error"]
 Attribution = Literal["perf", "probe", "est"]
-Phase = Literal["queued", "capture", "import", "passes", "build", "benchmark", "analyze", "done", "error"]
+Phase = Literal["queued", "capture", "import", "passes", "build", "provenance", "benchmark", "analyze", "done", "error"]
 
 
 class Snapshot(BaseModel):
@@ -110,9 +110,12 @@ class Op(BaseModel):
     stage: str
     name: str
     loc: Optional[str] = None
-    source_line: Optional[int] = None
+    source_line: Optional[int] = None  # first of source_lines
+    source_lines: list[int] = []       # lines of the user's source this op stands for (fusion: several)
+    approximate: bool = False          # lines came from a heuristic (dataflow neighbours), not a location
+    displayable: bool = True           # false for containers, constants, terminators, payload ops
     result_types: list[str] = []
-    text_line: Optional[int] = None    # line in the displayed snapshot
+    text_line: Optional[int] = None    # 1-based line in the displayed snapshot text
     cost: Optional[dict[str, float]] = None
     share: Optional[float] = None
     share_kind: Optional[Attribution] = None

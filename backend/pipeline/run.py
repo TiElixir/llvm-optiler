@@ -21,6 +21,10 @@ from backend.toolchain import find_tool, target_triple
 from .capture import SRC_REL, run_capture
 from .config import PipelineConfig, StageSpec, PassSpec
 from .llvm_steps import BuildResult, build_native
+from backend.provenance.build import build_all, source_stage, write_all
+from backend.provenance.llvm_ops import parse_asm, parse_llvm_ir
+from backend.provenance.mlir_ops import collect_stage
+from backend.provenance.model import StageProv
 from .mlir_runner import SnapshotRecord, TailResult, run_infrastructure_tail, run_mlir_pipeline
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -98,8 +102,15 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
     with ctx:
         module = ir.Module.parse((run_dir / "capture" / "import.mlir").read_text())
     resolved = substitute_run_dir(config, run_dir)
+    provs: dict[str, StageProv] = {}
+
+    def capture_stage_ops(stage: str, rec: SnapshotRecord, mod: ir.Module) -> None:
+        provs[stage] = collect_stage(mod, stage, rec.idx, run_dir / "anchor" / f"{stage}.mlir",
+                                     run_dir / rec.path)
+
     records: list[SnapshotRecord] = run_mlir_pipeline(
-        module, resolved, run_dir, on_pass=lambda n, total, name: emit("passes", n=n, total=total, name=name))
+        module, resolved, run_dir, on_pass=lambda n, total, name: emit("passes", n=n, total=total, name=name),
+        stage_hook=capture_stage_ops)
     tail: TailResult = run_infrastructure_tail(module, run_dir, len(records), triple=target_triple())
     records += tail.records
 
@@ -109,8 +120,21 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
                                       on_step=lambda s: emit("build", step=s))
     records += build.records
 
+    # provenance: source lines -> every stage -> LLVM IR -> assembly
+    emit("provenance")
+    provs["source"] = source_stage(json.loads((run_dir / "capture" / "fx_nodes.json").read_text()))
+    if "llvm_dialect" in provs:
+        o3 = next(r for r in build.records if r.pass_name == "O3 result")
+        asm = next(r for r in build.records if r.stage == "asm")
+        provs["llvm_ir"] = parse_llvm_ir((run_dir / "llvm" / "full" / "model_opt.ll").read_text(),
+                                         provs["llvm_dialect"], o3.idx)
+        provs["asm"] = parse_asm((run_dir / asm.path).read_text(), provs["llvm_dialect"], asm.idx)
+    stage_ops = build_all(provs)
+    write_all(run_dir, stage_ops)
+
     bench = None
     if benchmark:
         emit("benchmark")
         bench = run_bench_subprocess(run_dir, iters=iters, warmup=warmup, threads=threads)
-    return {"records": records, "bench": bench, "build": build, "tail": tail, "meta": meta}
+    return {"records": records, "bench": bench, "build": build, "tail": tail, "meta": meta,
+            "provenance": stage_ops}

@@ -16,6 +16,7 @@ export const api = {
   run: (id) => fetch(`/api/runs/${id}`).then(json),
   createRun: (req) => fetch("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) }).then(json),
   snapshot: (id, idx) => fetch(`/api/runs/${id}/snapshots/${idx}`).then(async (r) => { if (!r.ok) throw new Error(r.statusText); return r.text(); }),
+  stage: (id, stage) => fetch(`/api/runs/${id}/stages/${stage}`).then(json),
   diff: (id, a, b) => fetch(`/api/runs/${id}/diff?a=${a}&b=${b}`).then(json),
 };
 

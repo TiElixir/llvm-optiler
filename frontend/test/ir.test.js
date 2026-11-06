@@ -40,7 +40,8 @@ test("highlighted HTML is escaped and renderCode numbers lines", () => {
   assert.ok(highlightLine("mlir", "%x = a.b : tensor<2xf32>").includes("&lt;"));
   assert.ok(!highlightLine("llvm", "<script>").includes("<script>"));
   const c = renderCode("mlir", "a.b\nc.d\n");
-  assert.equal(c.gutter, "1\n2");
+  assert.ok(c.gutter.includes(">1<") && c.gutter.includes(">2<"));
+  assert.ok(renderCode("mlir", "a\nb", [2]).html.includes('class="l hl" data-n="2"'));
   assert.ok(c.html.includes('data-n="2"'));
 });
 
