@@ -70,7 +70,7 @@ def run_bench_subprocess(run_dir: Path, iters: int = 100, warmup: int = 10, thre
 
 def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = None,
                 capture_from: Path | None = None, benchmark: bool = True,
-                iters: int = 100, threads: int = 1, emit: Emit | None = None) -> dict:
+                iters: int = 100, warmup: int = 10, threads: int = 1, emit: Emit | None = None) -> dict:
     """Run the full pipeline in ``run_dir``. Returns {records, bench, build, tail}."""
     run_dir = Path(run_dir)
     emit = emit or (lambda *a, **k: None)
@@ -112,5 +112,5 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
     bench = None
     if benchmark:
         emit("benchmark")
-        bench = run_bench_subprocess(run_dir, iters=iters, threads=threads)
+        bench = run_bench_subprocess(run_dir, iters=iters, warmup=warmup, threads=threads)
     return {"records": records, "bench": bench, "build": build, "tail": tail, "meta": meta}

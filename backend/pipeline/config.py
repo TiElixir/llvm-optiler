@@ -29,7 +29,7 @@ class PassSpec(BaseModel):
     def text(self) -> str:
         if not self.options:
             return self.pass_
-        opts = " ".join(f"{k}={v}" for k, v in self.options.items())
+        opts = " ".join(f"{k}={str(v).lower() if isinstance(v, bool) else v}" for k, v in self.options.items())
         if self.pass_.endswith("}"):
             return self.pass_[:-1] + " " + opts + "}"
         return f"{self.pass_}{{{opts}}}"

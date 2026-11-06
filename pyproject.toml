@@ -20,7 +20,10 @@ dev = ["pytest", "httpx"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
-markers = ["slow: long-running integration tests (compile + benchmark)"]
+markers = [
+  "slow: long-running integration tests (compile + benchmark)",
+  "pipeline: end-to-end compile of the shipped templates (needs the native toolchain)",
+]
 
 [tool.setuptools]
 packages = []

@@ -19,6 +19,9 @@ from .mlir_runner import SnapshotRecord
 
 RT_SRC = Path(__file__).resolve().parent.parent / "runtime" / "optiler_rt.c"
 OPT_PIPELINE = "default<O3>"
+# Per-pass dumps re-print every embedded weight; past this many bytes of global initializers
+# the dump run is skipped (input and O3 result are still stored).
+LARGE_GLOBALS_BYTES = 2_000_000
 
 _DUMP_RE = re.compile(r"^\*\*\* IR Dump (After|Before) (.+?) \*\*\*\s*$")
 
@@ -43,6 +46,7 @@ class BuildResult:
     asm_path: str = "asm/model.s"
     commands: list[list[str]] = field(default_factory=list)
     times_ms: dict[str, float] = field(default_factory=dict)
+    per_pass_dumps: bool = True
 
 
 def parse_print_changed(text: str) -> list[tuple[str, str, str]]:
@@ -106,10 +110,14 @@ def build_native(run_dir: Path, llvm_ir: str, start_idx: int, cpu: str = "native
     step("opt")
     opt_out = run_dir / "llvm" / "full" / "model_opt.ll"
     remarks = run_dir / "reports" / "remarks.yaml"
-    cmd = [opt, "-S", f"-passes={OPT_PIPELINE}", f"-mcpu={cpu}",
-           "-print-changed=quiet", "-print-module-scope",
-           "-pass-remarks-missed=loop-vectorize", "-pass-remarks-analysis=loop-vectorize",
-           f"-pass-remarks-output={remarks}", str(ll_in), "-o", str(opt_out)]
+    globals_bytes = sum(len(l) for l in llvm_ir.split("\n") if l.startswith("@"))
+    per_pass = globals_bytes <= LARGE_GLOBALS_BYTES
+    res.per_pass_dumps = per_pass
+    cmd = [opt, "-S", f"-passes={OPT_PIPELINE}", f"-mcpu={cpu}"]
+    if per_pass:
+        cmd += ["-print-changed=quiet"]  # function passes dump the function, module passes the module
+    cmd += ["-pass-remarks-missed=loop-vectorize", "-pass-remarks-analysis=loop-vectorize",
+            f"-pass-remarks-output={remarks}", str(ll_in), "-o", str(opt_out)]
     t0 = time.perf_counter()
     r = _run("opt", cmd)
     res.times_ms["opt"] = (time.perf_counter() - t0) * 1000
@@ -119,7 +127,7 @@ def build_native(run_dir: Path, llvm_ir: str, start_idx: int, cpu: str = "native
         "\n".join(l for l in r.stderr.splitlines() if "remark:" in l) + "\n")
     idx = start_idx + 1
     prev = sha
-    for kind, header, text in parse_print_changed(r.stderr):
+    for kind, header, text in (parse_print_changed(r.stderr) if per_pass else []):
         if kind != "After":
             continue
         name = header.split(" on ")[0].strip()
@@ -131,6 +139,16 @@ def build_native(run_dir: Path, llvm_ir: str, start_idx: int, cpu: str = "native
             changed=s != prev, time_ms=0.0, op_counts={}, total_ops=text.count("\n"),
             path=str(p.relative_to(run_dir)), sha1=s, kind="pass"))
         prev, idx = s, idx + 1
+
+    final = opt_out.read_text()
+    fin = run_dir / "llvm" / f"{idx:03d}_O3-result.ll"
+    fin.write_text(elide_globals(final))
+    fs = hashlib.sha1(final.encode()).hexdigest()
+    res.records.append(SnapshotRecord(
+        idx=idx, stage="llvm_ir", pass_name="O3 result", pass_text="opt -passes=default<O3>",
+        composite=False, changed=fs != prev, time_ms=res.times_ms["opt"], op_counts={},
+        total_ops=final.count("\n"), path=str(fin.relative_to(run_dir)), sha1=fs, kind="pass"))
+    idx += 1
 
     # 3. llc -> object
     step("llc")
