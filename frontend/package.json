@@ -1,0 +1,7 @@
+{
+  "name": "optiler-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Static UI served by the API at /. No dependencies, no build step. `npm test` runs node's built-in test runner.",
+  "scripts": { "test": "node --test test/" }
+}

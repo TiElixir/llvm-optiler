@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Optiler</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="bar" id="bar">
+    <span class="brand">optiler</span>
+    <label class="field">
+      <span class="kicker">model</span>
+      <select id="template" aria-label="Template"></select>
+    </label>
+    <button id="compile" type="button">compile</button>
+    <span class="hint kicker">ctrl+enter</span>
+    <span id="status" class="status" role="status" aria-live="polite"></span>
+    <span class="spacer"></span>
+    <span id="toolchain" class="kicker"></span>
+  </header>
+
+  <section id="metrics" class="metrics" aria-label="Result" hidden></section>
+
+  <main class="grid">
+    <aside class="panel left" aria-label="Model source">
+      <div class="panel-head"><span class="kicker">source</span><span class="kicker">defines model, inputs</span></div>
+      <textarea id="source" spellcheck="false" aria-label="PyTorch model source" wrap="off"></textarea>
+    </aside>
+
+    <section class="panel map" aria-label="Pipeline map">
+      <div class="panel-head"><span class="kicker">pipeline map</span><span id="map-count" class="kicker"></span></div>
+      <div id="map" class="map-body"><p class="empty">Compile a model to see every pass it goes through.</p></div>
+    </section>
+  </main>
+
+  <section id="inspector" class="inspector" aria-label="Inspector">
+    <div class="tabs" role="tablist">
+      <span class="kicker">inspector</span>
+      <button role="tab" aria-selected="true" data-itab="ir">ir</button>
+      <button role="tab" aria-selected="false" data-itab="diff">diff</button>
+      <button role="tab" aria-selected="false" data-itab="evidence">evidence</button>
+      <span id="inspector-title" class="kicker grow"></span>
+      <button id="inspector-toggle" type="button" aria-expanded="false">open</button>
+    </div>
+    <div id="inspector-body" class="inspector-body" hidden></div>
+  </section>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -22,3 +22,7 @@ frontend/playwright-report/
 .idea/
 .DS_Store
 *.log
+
+# stray bundler caches
+frontend/.vite/
+frontend/node_modules/

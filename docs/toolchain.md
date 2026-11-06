@@ -76,3 +76,22 @@ alone is undone by that fusion. With `k` moved out and fusion off, the innermost
 contiguous, and `loop-vectorize` accepts it. So the first fix D3 can offer is measured to work.
 Transform scripts are attached with `transform-preload-library{transform-library-paths=${RUN_DIR}/transforms/t.mlir}`
 followed by `transform-interpreter` at the end of `linalg_tensor`; `${RUN_DIR}` is substituted at run time.
+
+### M0b across all templates (median ms, 50 iterations, core-pinned; eager is PyTorch at 1 thread)
+
+| template | baseline | drop affine fusion | **interchange + drop affine fusion** | drop elementwise fusion | eager |
+|---|---|---|---|---|---|
+| attention_block | 6.74 | 4.43 (1.52x) | **0.518 (13.0x)** | 4.28 (1.58x) | 0.23 |
+| mlp | 3.35 | 2.07 (1.62x) | **0.217 (15.4x)** | 4.40 (0.76x) | 0.11 |
+| softmax | 1.04 | 1.01 | 1.03 | **wrong output** | 0.20 |
+| layernorm | 0.75 | 0.74 | 0.77 (0.96x) | 1.16 (0.64x) | 0.09 |
+
+* Matmul-bearing models (`attention_block`, `mlp`, `matmul_relu`) get a 13-15x speedup from the interchange
+  fix, so the M6 acceptance check (a child run that is measurably faster) is reachable with a real,
+  verified fix. The compiled code is still 2-4x slower than eager (oneDNN/MKL), which is expected.
+* Models without a matmul (`softmax`, `layernorm`) are not helped by it; no fix is offered for them
+  unless a detector finds a real cause.
+* Removing `linalg-fuse-elementwise-ops` from `softmax` produces wrong results (correctness check fails),
+  and slows `mlp`/`layernorm`. This is why speed claims are hidden whenever the correctness check fails.
+* The demo narrative "unfused softmax" is therefore a hypothesis (decisions.md #7). The measured lead
+  finding on `attention_block` is the unvectorized matmul reduction loop (D3).

@@ -1,7 +1,6 @@
 """API tests: fast ones need no compile; one slow end-to-end run goes through run_job in-process."""
 from __future__ import annotations
 
-import importlib.util
 import json
 import threading
 from pathlib import Path
@@ -89,13 +88,6 @@ def test_toolchain(client):
     assert all(v is None or isinstance(v, str) for v in body["tools"].values())
     assert "torch_mlir" in body and isinstance(body["warnings"], list)
 
-
-def test_cors_allows_vite_dev_origin(client):
-    r = client.options("/api/runs", headers={"Origin": "http://localhost:5173",
-                                             "Access-Control-Request-Method": "POST"})
-    assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
-    r = client.get("/api/runs", headers={"Origin": "http://evil.example"})
-    assert "access-control-allow-origin" not in r.headers
 
 
 # ------------------------------------------------------------------ creating and reading runs
@@ -314,13 +306,13 @@ def test_sse_tails_a_running_run(client, store):
     assert [e["phase"] for e in events] == ["capture", "passes", "done"]
 
 
-# ------------------------------------------------------------------ generated TypeScript
+# ------------------------------------------------------------------ static frontend
 
-def test_types_not_stale():
-    spec = importlib.util.spec_from_file_location("gen_types", ROOT / "scripts" / "gen_types.py")
-    gen = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gen)
-    assert gen.check(), "frontend/src/api/types.ts is stale: run `python scripts/gen_types.py`"
+def test_serves_frontend_and_api_side_by_side(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "<title>Optiler</title>" in r.text
+    assert client.get("/js/main.js").status_code == 200
+    assert client.get("/api/templates").status_code == 200
 
 
 # ------------------------------------------------------------------ end to end

@@ -16,8 +16,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from backend.pipeline.config import DEFAULT_PIPELINE, STAGES, PipelineConfig
@@ -28,8 +28,9 @@ from backend.schemas import (
 from backend.store.runs import DEFAULT_RUNS_DIR, ROOT, RunNotFound, RunStore
 from backend.toolchain import toolchain_report
 
+FRONTEND_DIR = ROOT / "frontend"
+
 TEMPLATES_DIR = ROOT / "backend" / "templates"
-DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 EVENT_POLL_S = 0.2
 FINISHED_GRACE_S = 1.0     # how long a finished run may still owe its terminal event
 WORKER_CHECK_S = 1.0
@@ -133,8 +134,6 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
 
     app = FastAPI(title="Optiler", lifespan=lifespan)
     app.state.get_store = get_store
-    app.add_middleware(CORSMiddleware, allow_origins=DEV_ORIGINS, allow_methods=["*"],
-                       allow_headers=["*"])
 
     @app.exception_handler(RunNotFound)
     async def _run_not_found(_req: Request, exc: RunNotFound) -> JSONResponse:
@@ -295,6 +294,8 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
         return toolchain_report()
 
     app.include_router(api)
+    if FRONTEND_DIR.is_dir():  # one process serves API and UI; mounted last so /api/* wins
+        app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
     return app
 
 

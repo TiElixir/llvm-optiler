@@ -1,0 +1,111 @@
+/*
+ * Design tokens measured on 2026-11-07 from https://segfault.compilertech.org/
+ * Browser viewport width at measurement: 1908 px (window could not be resized to
+ * 1440 px; clamp()-based sizes are therefore also stated at 1440 px below).
+ * Method: getComputedStyle on live elements plus the site's own :root custom
+ * properties and CSS rules, read with Claude in Chrome. Nothing was downloaded.
+ *
+ * Where each group came from:
+ *   colors          site :root vars --color-ink, -ink-panel, -ink-deep, -bone, -muted,
+ *                   -faint, -rule, -rule-soft, -accent, -accent-hi, -accent-text, -ok,
+ *                   -err; confirmed against computed styles of body, buttons, cells.
+ *   fonts           body/.label computed font-family and document.fonts (Chalet London
+ *                   500, Source Code Pro variable 200-900).
+ *   type scale      computed styles of h2.h-section, h3.h-card, p, .label, nav buttons,
+ *                   prize figure; clamp() formulas read from the site stylesheet.
+ *   layout          computed styles of the 3-column bento grid, section wrappers,
+ *                   header, buttons.
+ *   heat-1          token-field SVG: svg opacity 0.16 x text opacity 0.55 = 0.088.
+ *   heat-5          estimate (not measured).
+ *   --changed       design choice, not measured (see below).
+ * Values with a trailing "estimate" comment were not measured.
+ */
+:root {
+  color-scheme: dark; /* measured: the site sets color-scheme: dark, no light theme, no prefers-color-scheme rules */
+
+  /* surfaces and lines */
+  --bg: #141110;            /* html/body background (site --color-ink) */
+  --bg-raised: #191614;     /* panels: "Fully online" bar, diagram cell (site --color-ink-panel) */
+  --bg-deep: #0f0d0c;       /* footer background (site --color-ink-deep) */
+  --rule: #2a2522;          /* 1px cell/section borders, header border, button frame (site --color-rule) */
+  --rule-soft: #201c1a;     /* faint vertical grid lines (site --color-rule-soft) */
+
+  /* text */
+  --fg: #ede7e0;            /* headings, bright text (site --color-bone) */
+  --body: #9a938c;          /* paragraphs, kickers (site --color-muted) */
+  --dim: #5c5651;           /* index numbers, diagram strokes (site --color-faint); only 2.6:1 on --bg, decorative use only */
+
+  /* accent */
+  --accent: #4e03ff;        /* primary button, "Winners" label, FINALE diagram box, focus ring, ::selection */
+  --accent-hi: #5f18ff;     /* primary button hover (measured on hover) */
+  --accent-text: #8a5cff;   /* violet text on dark (site --color-accent-text), 4.5:1 on --bg */
+  --accent-fg: #ede7e0;     /* text on --accent: measured as bone, not pure white */
+
+  /* status */
+  --error: #ff7a66;         /* site --color-err */
+  --ok: #6ee7a0;            /* site --color-ok */
+  /* --changed is a design choice, not measured: amber borrowed from the site's gold
+     podium color (#d9b45b), 9.5:1 on --bg, distinct from fg, accent and error. */
+  --changed: #d9b45b;
+
+  /* heat ramp: one hue (measured --fg, 237 231 224), evenly spaced alpha */
+  --heat-1: rgba(237, 231, 224, 0.088);
+  --heat-2: rgba(237, 231, 224, 0.204);
+  --heat-3: rgba(237, 231, 224, 0.319);
+  --heat-4: rgba(237, 231, 224, 0.435);
+  --heat-5: rgba(237, 231, 224, 0.55); /* estimate */
+
+  /* fonts: measured family names first, then fallbacks we can actually ship */
+  --font-sans: "chaletLondon", "Geist", "Inter Tight", "Helvetica Neue", Arial, system-ui, sans-serif; /* Chalet London is commercial (House Industries): not shipped, Geist is the stand-in */
+  --font-mono: "Source Code Pro", "Geist Mono", "JetBrains Mono", ui-monospace, monospace; /* Source Code Pro is OFL, can be self-hosted */
+  --weight: 500;            /* every text element measured at 500, no other weight is loaded */
+
+  /* body type */
+  --text-base: 15px;        /* p, cell body */
+  --lh-body: 1.55;          /* 23.25px at 15px */
+  --text-page: 16px;       /* <body> font-size, line-height 24px */
+  --lh-page: 1.5;
+  --text-small: 14px;       /* secondary lines, line-height 20px */
+  --lh-small: 1.43;
+
+  /* display type */
+  --text-hero: min(clamp(2.75rem, 7.4vw, 6.5rem), calc(10.2vw - 3px)); /* defined in site CSS (.h-hero, 104px max) but unused: the hero is an SVG wordmark 768px wide, 110px tall */
+  --text-section: clamp(2rem, 5vw, 3.75rem); /* section h2: 60px at 1440 and 1908 */
+  --lh-section: 1;          /* 60px */
+  --tracking-section: -0.025em; /* -1.5px at 60px */
+  --text-card: clamp(1.25rem, 1.7vw, 1.5rem); /* card h3: 24px at 1440 and 1908 */
+  --lh-card: 1.1;           /* 26.4px */
+  --tracking-card: -0.025em; /* -0.6px at 24px (some h3 use -0.4px) */
+  --text-tagline: 28px;     /* hero "Where impossible is just an error code" */
+  --lh-tagline: 1;
+  --tracking-tagline: -0.025em; /* -0.7px */
+  --text-figure: 72px;      /* prize figure, mono */
+  --lh-figure: 1;
+  --tracking-figure: -0.05em; /* -3.6px */
+
+  /* mono labels */
+  --kicker-size: 11px;      /* cell kicker + index, buttons, nav (uppercase) */
+  --kicker-tracking: 0.14em; /* 1.54px (site .label) */
+  --kicker-lh: 1.5;         /* 16.5px */
+  --kicker-size-sm: 10px;   /* section labels such as "The format", tag rows */
+  --kicker-tracking-sm: 0.16em; /* 1.6px; 10px tags elsewhere use 0.12em (1.2px) */
+  --mono-small: 13px;       /* dates, e.g. "Aug 1" */
+  --mono-small-tracking: 0.04em; /* 0.52px */
+
+  /* layout */
+  --container: 1184px;      /* content column incl. 1px side rules; 1182px grid inside */
+  --section-pad-y: 96px;
+  --section-pad-x: 24px;
+  --cell-pad: 36px;         /* bento cell padding */
+  --cell-gap: 0px;          /* cells are separated by 1px rules, no gap */
+  --kicker-row-gap: 16px;   /* kicker to index inside a cell */
+  --heading-gap: 28px;      /* space above card h3 */
+  --btn-h: 40px;
+  --btn-pad: 12px 20px;
+  --header-h: 65px;
+  --radius: 0px;            /* every measured box, button and label has radius 0 */
+  --border: 1px;
+  --focus-ring: 2px solid var(--accent); /* :focus-visible, outline-offset 3px */
+  --focus-offset: 3px;
+  --dur-hover: 0.2s;        /* button hover transition */
+}
