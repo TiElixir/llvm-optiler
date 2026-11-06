@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -15,6 +16,8 @@ from backend.pipeline.config import STAGES, PipelineConfig
 from backend.pipeline.llvm_steps import BuildError
 from backend.pipeline.mlir_runner import PipelineError, SnapshotRecord
 from backend.pipeline.run import compile_run
+from backend.profile import perf, shares
+from backend.provenance.build import write_all
 from backend.schemas import FxNode, Metrics, ProgressEvent, Run, Snapshot, Stage
 from backend.store.runs import RunStore
 from backend.toolchain import ToolMissing, toolchain_report
@@ -50,8 +53,42 @@ def metrics_from_bench(b: dict, run: Run) -> Metrics:
     return m
 
 
+def _estimate(run: Run, out: dict, stages) -> dict | None:
+    """Static estimate of per-line shares from FLOPs/bytes of the linalg ops (labeled ``est``)."""
+    from backend.profile import calibrate
+    lt, costs = stages.get("linalg_tensor"), (out.get("costs") or {}).get("ops")
+    if not lt or not costs:
+        return None
+    pairs = [(o.source_lines, costs[i]) for i, o in enumerate(lt.ops) if i in costs and o.source_lines]
+    per_line = calibrate.est_line_shares(pairs, calibrate.load_or_run())
+    return shares.apply_est(per_line) if per_line else None
+
+
 def analyze(store: RunStore, run: Run, out: dict) -> None:
-    """Hook for provenance (M3), attribution (M4) and detectors (M5)."""
+    """Runtime attribution (PLAN.md 8.2): perf when it works, a labeled static estimate otherwise."""
+    if run.metrics.correct is not True:
+        return  # a wrong result hides every speed claim, shares included
+    d = store.run_dir(run.id)
+    stages = out["provenance"]
+    mode = os.environ.get("OPTILER_ATTRIBUTION", "auto")
+    result, kind, notice = None, None, None
+    if mode in ("auto", "perf"):
+        try:
+            result, kind = shares.apply_perf(perf.attribute(d), stages), "perf"
+        except Exception as e:  # noqa: BLE001 - any perf trouble falls back to the estimate
+            notice = f"perf unavailable ({str(e).splitlines()[0][:120]})"
+    if result is None:
+        try:
+            result, kind = _estimate(run, out, stages), "est"
+        except Exception as e:  # noqa: BLE001
+            notice = f"{notice + '; ' if notice else ''}estimate failed ({type(e).__name__}: {e})"
+        if result is not None:
+            notice = (notice or "perf not used") + "; shares are static estimates (FLOPs and bytes per op)"
+    if result is None:
+        run.metrics.attribution_notice = notice or "no runtime attribution available"
+        return
+    shares.fill_metrics(run.metrics, result, kind, run.fx_nodes, notice)
+    write_all(d, stages)
 
 
 def run_job(store: RunStore, run_id: str) -> None:

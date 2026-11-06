@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectorPath, coverageText, groupHit, groupOps, highlightTextLines, toggleSelection } from "../js/lineage.js";
+import { connectorPath, coverageText, groupHit, groupOps, groupShare, heatBucket, highlightTextLines, toggleSelection } from "../js/lineage.js";
 
 const op = (id, name, lines, extra = {}) => ({ id, name, source_lines: lines, displayable: true, approximate: false, text_line: null, ...extra });
 const stage = { stage: "linalg_tensor", ops: [
@@ -54,4 +54,13 @@ test("connectorPath is orthogonal and straight when aligned", () => {
 
 test("coverageText", () => {
   assert.equal(coverageText(0.456), "46% exact lineage"); assert.equal(coverageText(null), "");
+});
+
+test("groupShare sums a group's lines; heatBucket thresholds", () => {
+  const [l7, fused] = groupOps(stage);
+  assert.equal(groupShare(l7, { 7: 0.25, 8: 0.5 }), 0.25);
+  assert.equal(groupShare(fused, { 7: 0.25, 8: 0.5 }), 0.75);
+  assert.equal(groupShare(l7, {}), null);
+  assert.equal(groupShare(l7, null), null);
+  assert.deepEqual([null, 0, 0.01, 0.05, 0.15, 0.3, 0.9].map(heatBucket), [0, 0, 1, 2, 3, 4, 5]);
 });

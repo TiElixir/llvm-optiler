@@ -67,7 +67,7 @@ def stage_ops(cur: StageProv, prev: StageProv | None) -> StageOps:
     ops = [Op(
         id=op_id(cur, o), snapshot_idx=cur.snapshot_idx, stage=cur.stage, name=o.name, loc=o.loc,
         source_line=o.lines[0] if o.lines else None, source_lines=o.lines, approximate=o.approximate,
-        displayable=o.displayable, result_types=o.result_types, text_line=o.text_line,
+        displayable=o.displayable, result_types=o.result_types, text_line=o.text_line, address=o.addr,
     ) for o in cur.ops]
     return StageOps(stage=cur.stage, snapshot_idx=None if cur.stage == "source" else cur.snapshot_idx, ops=ops,
                     links=_links(prev, cur) if prev else [], exact_lineage_pct=cur.exact_pct())

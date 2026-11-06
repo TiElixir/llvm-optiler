@@ -37,6 +37,10 @@ select { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--
 .status { font-family: var(--font-mono); font-size: 12.5px; color: var(--body); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status.error { color: var(--error); }
 
+#orb { flex: none; }
+.waiting { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 36px 16px; }
+.waiting p { margin: 0; font: 12.5px var(--font-mono); color: var(--body); }
+
 /* result bar */
 .metrics { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 36px; padding: 8px 16px; border-bottom: 1px solid var(--rule); }
 .metric .kicker { display: block; margin-bottom: 2px; }
@@ -141,3 +145,5 @@ button.src-line:hover .code { text-decoration: underline; text-decoration-color:
 .ir .l.hl { background: var(--bg-raised); box-shadow: inset 2px 0 0 var(--fg); color: var(--fg); }
 .ir .gutter span { display: block; } .ir .gutter span.hl { color: var(--fg); }
 .ir .gutter { white-space: normal; }
+.gl.heat { background: var(--h); padding: 2px 5px; color: var(--fg); }
+.gl.heat.est { background: transparent; border: 1px dashed var(--body); padding: 1px 4px; }

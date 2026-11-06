@@ -65,6 +65,7 @@ class Metrics(BaseModel):
     per_op_share: dict[str, float] = {}
     attribution: Optional[Attribution] = None
     attribution_notice: Optional[str] = None
+    attribution_other: Optional[float] = None   # share of samples with no source line (prologue, runtime)
     hottest_line: Optional[int] = None
     hottest_line_code: Optional[str] = None
     hottest_line_share: Optional[float] = None
@@ -116,6 +117,7 @@ class Op(BaseModel):
     displayable: bool = True           # false for containers, constants, terminators, payload ops
     result_types: list[str] = []
     text_line: Optional[int] = None    # 1-based line in the displayed snapshot text
+    address: Optional[int] = None      # asm only: instruction address in model.so
     cost: Optional[dict[str, float]] = None
     share: Optional[float] = None
     share_kind: Optional[Attribution] = None

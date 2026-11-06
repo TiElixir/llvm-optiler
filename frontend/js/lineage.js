@@ -59,6 +59,20 @@ export function connectorPath(from, to) {
   return x1 === x2 ? `M${x1} ${y1}V${y2}` : `M${x1} ${y1}V${mid}H${x2}V${y2}`;
 }
 
+/** Runtime share of a group (sum over its source lines) from metrics.per_line_share, or null. */
+export function groupShare(group, perLine) {
+  if (!perLine || !group.lines.length) return null;
+  let s = 0, any = false;
+  for (const l of group.lines) if (perLine[l] != null) { s += perLine[l]; any = true; }
+  return any ? s : null;
+}
+
+/** Heat bucket 1..5 for a share (0 = none). */
+export function heatBucket(share) {
+  if (share == null || share <= 0) return 0;
+  return share >= 0.4 ? 5 : share >= 0.2 ? 4 : share >= 0.1 ? 3 : share >= 0.03 ? 2 : 1;
+}
+
 /** Coverage text for a stage label. */
 export function coverageText(pct) {
   return pct == null ? "" : `${Math.round(pct * 100)}% exact lineage`;

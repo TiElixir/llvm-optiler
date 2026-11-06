@@ -15,6 +15,7 @@ class OpRec:
     loc: str | None = None
     text_line: int | None = None  # 1-based line in the displayed snapshot text
     anchor_line: int | None = None  # LLVM dialect only: line in anchor/llvm_dialect.mlir (== text_line)
+    addr: int | None = None       # asm only: instruction address in model.so
 
 
 @dataclass

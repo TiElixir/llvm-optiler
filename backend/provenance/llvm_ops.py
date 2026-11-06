@@ -87,7 +87,8 @@ def parse_asm(text: str, dialect: StageProv, snapshot_idx: int) -> StageProv:
         if not m:
             continue
         mnemonic = m.group(2)
-        rec = OpRec(idx=len(prov.ops), name=mnemonic, text_line=n, displayable=mnemonic not in ASM_HIDDEN)
+        rec = OpRec(idx=len(prov.ops), name=mnemonic, text_line=n, displayable=mnemonic not in ASM_HIDDEN,
+                    addr=int(m.group(1), 16))
         _inherit(rec, by_line.get(anchor) if anchor else None, anchor)
         prov.ops.append(rec)
     return prov

@@ -4,7 +4,8 @@ import { api, watchRun } from "./api.js";
 import { esc, fmtMs, pad3 } from "./format.js";
 import { headlineModel } from "./headline.js";
 import { flavourForStage, renderCode } from "./ir.js";
-import { connectorPath, coverageText, groupHit, groupOps, highlightTextLines, toggleSelection } from "./lineage.js";
+import { connectorPath, coverageText, groupHit, groupOps, groupShare, heatBucket, highlightTextLines, toggleSelection } from "./lineage.js";
+import { mountOrb, orbStateForPhase } from "./orb.js";
 import { countUnit, describeDelta, opDelta, stageSnapshots } from "./passes.js";
 
 const $ = (id) => document.getElementById(id);
@@ -17,15 +18,30 @@ const state = {
 };
 const snapCache = new Map(); // `${runId}:${idx}` -> text
 
+// thinking orbs: a 20px one by the status text and a 64px one while waiting for the first snapshots
+let statusOrb = null, mapOrb = null;
+function setStatusOrb(phase) {
+  const el = $("orb");
+  if (!phase) { el.hidden = true; statusOrb?.destroy(); statusOrb = null; return; }
+  const next = orbStateForPhase(phase);
+  el.hidden = false;
+  if (statusOrb) statusOrb.set(next); else statusOrb = mountOrb(el, { state: next, size: 20 });
+}
+function setMapOrb(canvas, phase) {
+  mapOrb?.destroy(); mapOrb = null;
+  if (canvas) mapOrb = mountOrb(canvas, { state: orbStateForPhase(phase), size: 64 });
+}
+
 // ------------------------------------------------------------------ status + result bar
 
 function renderStatus() {
   const el = $("status");
   el.className = "status";
-  if (state.error) { el.classList.add("error"); el.textContent = state.error; return; }
+  if (state.error) { setStatusOrb(null); el.classList.add("error"); el.textContent = state.error; return; }
   const run = state.run;
-  if (!run) { el.textContent = ""; return; }
+  if (!run) { setStatusOrb(state.busy ? "queued" : null); el.textContent = state.busy ? "starting…" : ""; return; }
   const m = headlineModel(run, state.progress);
+  setStatusOrb(m.kind === "progress" ? m.phase : null);
   if (m.kind === "progress") el.textContent = [m.phase, m.step, m.name].filter(Boolean).join(" · ");
   else if (m.kind === "failed") { el.classList.add("error"); el.textContent = m.title; }
   else el.textContent = "";
@@ -68,6 +84,7 @@ const linesAttr = (lines) => lines.join(",");
 const hasSel = () => state.selLines.length > 0;
 
 function sourceRows(run) {
+  const perLine = run.metrics?.per_line_share;
   const groups = new Map();
   for (const n of run.fx_nodes) {
     if (n.op !== "call_function" || n.line == null) continue;
@@ -78,18 +95,25 @@ function sourceRows(run) {
   if (!groups.size) return `<p class="readout">no source lines recorded</p>`;
   return `<div class="src-lines${hasSel() ? " sel" : ""}">${[...groups.entries()].sort((a, b) => a[0] - b[0]).map(([line, g]) =>
     `<button class="src-line${state.selLines.includes(line) ? " hit" : ""}" data-lines="${line}" data-stage="source" title="trace L${line} through every stage">
-      <span class="ln">L${line}</span><span class="code">${esc(g.code ?? "")}</span><span class="nodes">${esc(g.nodes.join(" · "))}</span></button>`).join("")}</div>`;
+      <span class="ln">L${line}</span><span class="code">${esc(g.code ?? "")}</span><span class="nodes">${perLine?.[line] != null ? `${isEst() ? "~" : ""}${pct(perLine[line])} · ` : ""}${esc(g.nodes.join(" · "))}</span></button>`).join("")}</div>`;
 }
 
+const pct = (s) => (s < 0.005 ? "<1%" : `${Math.round(s * 100)}%`);
+const isEst = () => state.run?.metrics?.attribution === "est";
+
 function groupsHtml(stageId, sops) {
+  const perLine = state.run?.metrics?.per_line_share;
   return `<div class="groups">${groupOps(sops).map((g) => {
     const hit = groupHit(g, state.selLines);
     const cls = `grp${hit ? " hit" : ""}${hasSel() && !hit ? " dimmed" : ""}`;
     const chips = g.chips.map((c) => `<button class="chip${c.approx ? " approx" : ""}" data-lines="${linesAttr(g.lines)}" data-stage="${stageId}"
         title="${esc(`${c.name} ×${c.count} · ${g.lines.length ? `from ${g.label}` : "no source line"}${c.approx ? " · approximate (inferred from dataflow)" : ""}`)}">${esc(c.name)}${c.count > 1 ? `<b>×${c.count}</b>` : ""}</button>`).join("");
     const more = g.hidden.length ? `<span class="more" title="${esc(g.hidden.map((c) => `${c.name} ×${c.count}`).join(", "))}">+${g.hidden.length} more</span>` : "";
+    const share = groupShare(g, perLine);
+    const heat = heatBucket(share);
+    const shareTxt = share == null ? "" : ` ${isEst() ? "~" : ""}${pct(share)}`;
     return `<div class="${cls}" data-lines="${linesAttr(g.lines)}" data-approx="${g.approximate ? 1 : 0}">
-      <button class="gl" data-lines="${linesAttr(g.lines)}" data-stage="${stageId}"${g.lines.length ? ` title="trace ${esc(g.label)}"` : " disabled"}>${esc(g.label)}</button>
+      <button class="gl${heat ? ` heat${isEst() ? " est" : ""}` : ""}" ${heat ? `style="--h:var(--heat-${heat})" ` : ""}data-lines="${linesAttr(g.lines)}" data-stage="${stageId}"${g.lines.length ? ` title="${esc(`trace ${g.label}${share == null ? "" : ` · ${pct(share)} of runtime (${isEst() ? "estimate" : "measured"})`}`)}"` : " disabled"}>${esc(g.label)}${shareTxt}</button>
       <span class="chips">${chips}${more}</span></div>`;
   }).join("")}</div>`;
 }
@@ -109,14 +133,18 @@ function passBox(stage, items) {
 function renderMap() {
   const el = $("map");
   const run = state.run;
-  if (!run) { el.innerHTML = `<p class="empty">Compile a model to see every pass it goes through.</p>`; $("map-count").textContent = ""; return; }
+  if (!run) { setMapOrb(null, null); el.innerHTML = `<p class="empty">Compile a model to see every pass it goes through.</p>`; $("map-count").textContent = ""; return; }
   const scroll = el.scrollTop;
   const rows = run.stages.filter((s) => s.id === "source" || s.snapshot_idxs.length);
   $("map-count").innerHTML = run.snapshots.length ? `${run.snapshots.length} snapshots${state.prov ? ` · <span class="legend">dashed = approximate</span>` : ""}` : "";
   if (!rows.length) {
-    el.innerHTML = `<p class="empty">${run.status === "error" ? "No stages were produced." : "Waiting for the first snapshots…"}</p>`;
+    if (run.status === "error") { setMapOrb(null); el.innerHTML = `<p class="empty">No stages were produced.</p>`; return; }
+    const phase = state.progress?.phase ?? run.phase;
+    el.innerHTML = `<div class="waiting"><canvas></canvas><p>${esc(phase)}…</p></div>`;
+    setMapOrb(el.querySelector("canvas"), phase);
     return;
   }
+  setMapOrb(null, null);
   el.innerHTML = rows.map((stage) => {
     const items = stageSnapshots(run.snapshots, stage.snapshot_idxs);
     const last = items.at(-1)?.snap;

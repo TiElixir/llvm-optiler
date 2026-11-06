@@ -103,10 +103,19 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
         module = ir.Module.parse((run_dir / "capture" / "import.mlir").read_text())
     resolved = substitute_run_dir(config, run_dir)
     provs: dict[str, StageProv] = {}
+    costs: dict[str, dict] = {}  # static cost model: walk idx -> cost (linalg_tensor), alloc summary (linalg_buffer)
 
     def capture_stage_ops(stage: str, rec: SnapshotRecord, mod: ir.Module) -> None:
         provs[stage] = collect_stage(mod, stage, rec.idx, run_dir / "anchor" / f"{stage}.mlir",
                                      run_dir / rec.path)
+        try:  # the cost model needs the live module (it keeps changing after this stage)
+            from backend.profile import cost
+            if stage == "linalg_tensor":
+                costs["ops"] = cost.compute_costs(mod)
+            elif stage == "linalg_buffer":
+                costs["static_alloc"] = cost.static_alloc_summary(mod)
+        except Exception as e:  # noqa: BLE001 - estimates are optional, never fail a compile
+            costs.setdefault("error", f"{type(e).__name__}: {e}")
 
     records: list[SnapshotRecord] = run_mlir_pipeline(
         module, resolved, run_dir, on_pass=lambda n, total, name: emit("passes", n=n, total=total, name=name),
@@ -130,6 +139,9 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
                                          provs["llvm_dialect"], o3.idx)
         provs["asm"] = parse_asm((run_dir / asm.path).read_text(), provs["llvm_dialect"], asm.idx)
     stage_ops = build_all(provs)
+    for i, c in (costs.get("ops") or {}).items():  # attach static costs to linalg_tensor ops
+        if "linalg_tensor" in stage_ops and i < len(stage_ops["linalg_tensor"].ops):
+            stage_ops["linalg_tensor"].ops[i].cost = c
     write_all(run_dir, stage_ops)
 
     bench = None
@@ -137,4 +149,4 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
         emit("benchmark")
         bench = run_bench_subprocess(run_dir, iters=iters, warmup=warmup, threads=threads)
     return {"records": records, "bench": bench, "build": build, "tail": tail, "meta": meta,
-            "provenance": stage_ops}
+            "provenance": stage_ops, "costs": costs}
