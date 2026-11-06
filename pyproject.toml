@@ -1,0 +1,26 @@
+[project]
+name = "optiler"
+version = "0.1.0"
+description = "Compile, diagnose, fix and compare PyTorch models through MLIR down to native code"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "torch==2.15.0+cpu",
+  "torch-mlir==20260930.892",
+  "numpy",
+  "fastapi",
+  "uvicorn",
+  "pydantic>=2",
+  "pyyaml",
+  "sse-starlette",
+  "zstandard",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+markers = ["slow: long-running integration tests (compile + benchmark)"]
+
+[tool.setuptools]
+packages = []

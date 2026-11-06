@@ -1,0 +1,24 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# generated runs, calibration, local toolchain
+runs/
+toolchain/
+
+# frontend
+node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+*.log
