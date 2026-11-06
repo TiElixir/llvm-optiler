@@ -11,3 +11,6 @@ PLAN.md stays the product spec. This file records where the build differs from i
 7. **The demo narrative is a hypothesis.** If measurement on `attention_block` shows a different top finding than "unfused softmax", the demo text or template dims change to fit the data, never the reverse (Rule 2).
 8. **Python 3.12** (venv via `uv`). The system Python is 3.14, which torch-mlir wheels do not support.
 9. **Own git repo** in `MLIR_v2/`, at most 12 planned commits, one per milestone after its checks pass.
+10. **Project-local LLVM 23.1.5.** `toolchain/llvm` (gitignored) from the official release tarball via `scripts/setup_llvm.sh`; the system LLVM is never modified (a partial `llvm` upgrade broke `opt`, and a full `-Syu` was declined).
+11. **D3's first fix is loop interchange + removing `affine-loop-fusion`**, not tile-and-vectorize: it was measured at 13.6x on `matmul_relu` (docs/toolchain.md) and needs only a three-line transform script. Tile+vectorize stays an option if a template needs it.
+12. **Large constants are elided in stored snapshots** (display only); `changed` hashes the full text.

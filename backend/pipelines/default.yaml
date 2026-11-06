@@ -1,0 +1,30 @@
+# Default lowering pipeline. Every pass name was verified against torch-mlir
+# 20260930.892 (LLVM 24.0.0git) with scripts/check_passes.py (Rule 1).
+- stage: torch
+  passes:
+    - "func.func(torch-match-quantized-custom-ops)"
+    - "torchdynamo-export-to-torch-backend-pipeline"        # composite
+- stage: linalg_tensor
+  passes:
+    - "torch-backend-to-linalg-on-tensors-backend-pipeline{allow-non-finites=true}"   # composite
+    - "func.func(linalg-fuse-elementwise-ops)"
+    - "canonicalize"
+    - "cse"
+- stage: linalg_buffer
+  passes:
+    - "one-shot-bufferize{bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map}"
+    - "buffer-deallocation-pipeline"                          # composite
+    - "canonicalize"
+- stage: loops
+  passes:
+    - "func.func(convert-linalg-to-affine-loops)"
+    - "func.func(affine-loop-fusion)"
+    - "lower-affine"
+    - "convert-scf-to-cf"
+- stage: llvm_dialect
+  passes:
+    - "func.func(llvm-request-c-wrappers)"
+    - "expand-strided-metadata"
+    - "finalize-memref-to-llvm{use-generic-functions=true}"
+    - "convert-to-llvm"
+    - "reconcile-unrealized-casts"
