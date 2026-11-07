@@ -202,6 +202,10 @@ class CreateRunRequest(BaseModel):
     threads: Optional[int] = None
 
 
+class ApplyFixRequest(BaseModel):
+    fix_id: Optional[str] = None
+
+
 class CreateRunResponse(BaseModel):
     run_id: str
 
@@ -237,3 +241,21 @@ class TemplateInfo(BaseModel):
 class TemplateSource(BaseModel):
     name: str
     source: str
+
+
+class CompareStage(BaseModel):
+    stage: str
+    a_snapshot_idx: Optional[int] = None
+    b_snapshot_idx: Optional[int] = None
+    a_ops: Optional[int] = None
+    b_ops: Optional[int] = None
+
+
+class CompareResult(BaseModel):
+    a: RunSummary
+    b: RunSummary
+    a_metrics: Metrics
+    b_metrics: Metrics
+    stages: list[CompareStage] = []
+    config_diff: str = ""
+    fix: Optional[Fix] = None             # the patch that turns the parent into the child, if one is a fix child

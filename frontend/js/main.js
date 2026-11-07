@@ -4,6 +4,7 @@ import { api, watchRun } from "./api.js";
 import { esc, fmtMs, pad3 } from "./format.js";
 import { evidenceLine, evidenceRows, findingLines, impactText, indexLabel, stepIndex } from "./findings.js";
 import { headlineModel } from "./headline.js";
+import { compareRows, runLabel, treeOf } from "./history.js";
 import { flavourForStage, renderCode } from "./ir.js";
 import { connectorPath, coverageText, groupHit, groupOps, groupShare, heatBucket, highlightTextLines, toggleSelection } from "./lineage.js";
 import { mountOrb, orbStateForPhase } from "./orb.js";
@@ -15,6 +16,9 @@ const state = {
   prov: null,               // { stage: StageOps } once the run is done
   selIdx: null, itab: "ir", iopen: false, busy: false, error: null,
   selFinding: null,         // id of the selected finding
+  runs: [],                 // all runs (for the history chain)
+  cmp: null,                // compare result when comparing two runs
+  cmpDiff: null,            // stage whose IR diff is shown in the inspector while comparing
   selLines: [],             // source lines being traced
   openPasses: new Set(),    // stages whose pass list is expanded
 };
@@ -89,9 +93,16 @@ function renderFindings() {
   if (box.hidden) return;
   const fs = run.findings ?? [];
   $("findings-count").textContent = String(fs.length).padStart(2, "0");
-  $("findings-list").innerHTML = fs.length ? fs.map((f, i) => `<li><button class="finding${f.id === state.selFinding ? " sel" : ""}" data-fid="${esc(f.id)}"
-      aria-pressed="${f.id === state.selFinding}"><span class="fi">${indexLabel(i)}</span><span class="ft">${esc(f.title)}</span>
-      <span class="fv">${esc(impactText(f))}</span><span class="fe">${esc(evidenceLine(f))}</span></button></li>`).join("")
+  $("findings-list").innerHTML = fs.length ? fs.map((f, i) => {
+    const sel = f.id === state.selFinding;
+    const verified = f.impact_verified?.kind === "verified";
+    const badge = sel && verified ? ` verified` : "";  // the accent marks exactly one thing: the selected finding's state
+    const act = sel && f.fix_ids.length && !f.impact_verified
+      ? `<span class="fx"><span class="fixbtn" role="button" tabindex="0" data-fix="${esc(f.id)}">fix <kbd>f</kbd></span></span>`
+      : sel && f.child_run_id ? `<span class="fx"><span class="linkbtn" role="button" tabindex="0" data-open="${esc(f.child_run_id)}">open fixed run</span></span>` : "";
+    return `<li><button class="finding${sel ? " sel" : ""}" data-fid="${esc(f.id)}" aria-pressed="${sel}"><span class="fi">${indexLabel(i)}</span>
+      <span class="ft">${esc(f.title)}</span><span class="fv${badge}">${esc(impactText(f))}</span><span class="fe">${esc(evidenceLine(f))}${f.impact_verified?.note ? ` · ${esc(f.impact_verified.note)}` : ""}</span>${act}</button></li>`;
+  }).join("")
     : `<li class="empty">no findings above threshold</li>`;
 }
 
@@ -109,6 +120,41 @@ function evidenceHtml(f) {
   const rows = evidenceRows(f).map(([k, kind, v]) => `<div class="ev"><span class="kicker">${esc(k.replaceAll("_", " "))}</span>${
     kind === "text" ? `<p>${esc(v)}</p>` : kind === "code" ? `<pre>${esc(v.join("\n"))}</pre>` : `<ul>${v.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`}</div>`).join("");
   return `<div class="evidence"><h3>${esc(f.title)}</h3><p class="sub">${esc(impactText(f))}${f.impact_est.note ? ` · ${esc(f.impact_est.note)}` : ""}${f.fix_ids.length ? ` · fix: ${esc(f.fix_ids.join(", "))}` : " · no automatic fix"}</p>${rows}</div>`;
+}
+
+// ------------------------------------------------------------------ run history + compare
+
+function renderHistory() {
+  const el = $("history");
+  const chain = state.runId ? treeOf(state.runs, state.runId) : [];
+  el.hidden = chain.length < 2;
+  if (el.hidden) return;
+  const parent = chain.find((r) => r.id === state.run?.parent_id);
+  el.innerHTML = `<span class="kicker">runs</span><ol>${chain.map((r) => {
+    const l = runLabel(r);
+    return `<li><button class="run${r.id === state.runId ? " sel" : ""}${r.id === state.cmp?.b.id ? " cmp" : ""}" data-run="${r.id}" aria-pressed="${r.id === state.runId}"
+      title="click to open · shift-click to compare with the open run"><span class="kicker">${esc(l.index)}</span> ${esc(l.name)} <b>${esc(l.time)}</b></button></li>`;
+  }).join("")}</ol>${parent && state.run?.status === "done" ? `<button class="linkbtn" data-compare="${parent.id}">compare with ${esc(runLabel(parent).index)}</button>` : ""}`;
+}
+
+async function showCompare(otherId) {
+  if (!state.runId || otherId === state.runId) return;
+  try { state.cmp = await api.compare(state.runId, otherId); state.cmpDiff = null; } catch (e) { state.error = e.message; renderStatus(); return; }
+  renderHistory(); renderMap(); renderInspector();
+}
+
+function closeCompare() { state.cmp = null; state.cmpDiff = null; renderHistory(); renderMap(); renderInspector(); }
+
+function compareHtml(c) {
+  const rows = compareRows(c).map(([k, a, b, d]) => `<tr><th scope="row">${esc(k)}</th><td>${esc(a)}</td><td>${esc(b)}</td><td>${esc(d)}</td></tr>`).join("");
+  const stages = c.stages.filter((s) => s.a_snapshot_idx != null && s.b_snapshot_idx != null)
+    .map((s) => `<button class="pass" data-cmpstage="${s.stage}">${esc(s.stage)}</button>`).join("");
+  return `<div class="compare"><div class="cmp-head"><span class="kicker">compare · ${esc(runLabel(c.a).index)} ${esc(c.a.label || "run")} vs ${esc(runLabel(c.b).index)} ${esc(c.b.label || "run")}</span>
+    <button class="linkbtn" data-closecmp>close</button></div>
+    ${c.fix ? `<p class="sub">fix: ${esc(c.fix.label)} — ${esc(c.fix.description)}</p>` : ""}
+    <table><thead><tr><th></th><th>${esc(runLabel(c.a).index)}</th><th>${esc(runLabel(c.b).index)}</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="kicker">pipeline config diff</p>${diffHtml(c.config_diff)}
+    <p class="kicker">ir diff per stage (final snapshot of each stage)</p><div class="passes">${stages}</div></div>`;
 }
 
 // ------------------------------------------------------------------ pipeline map
@@ -166,6 +212,7 @@ function passBox(stage, items) {
 function renderMap() {
   const el = $("map");
   const run = state.run;
+  if (state.cmp) { setMapOrb(null, null); el.innerHTML = compareHtml(state.cmp); return; }
   if (!run) { setMapOrb(null, null); el.innerHTML = `<p class="empty">Compile a model to see every pass it goes through.</p>`; $("map-count").textContent = ""; return; }
   const scroll = el.scrollTop;
   const rows = run.stages.filter((s) => s.id === "source" || s.snapshot_idxs.length);
@@ -283,6 +330,17 @@ async function renderInspector() {
     ? `${snap.stage} · ${pad3(snap.idx)} ${snap.pass}${snap.composite ? " · composite" : ""}${traced.length ? ` · ${traced.length} lines traced` : ""}` : "";
   body.hidden = !state.iopen;
   if (!state.iopen) return;
+  if (state.cmp && state.cmpDiff) {
+    const s = state.cmp.stages.find((x) => x.stage === state.cmpDiff);
+    $("inspector-title").textContent = `compare · ${s.stage} · ${state.cmp.a.id} → ${state.cmp.b.id}`;
+    body.hidden = false;
+    body.innerHTML = `<p class="empty">loading…</p>`;
+    try {
+      const d = await api.diff(state.cmp.a.id, s.a_snapshot_idx, s.b_snapshot_idx, state.cmp.b.id);
+      body.innerHTML = diffHtml(d.unified);
+    } catch (e) { body.innerHTML = `<p class="empty" style="color:var(--error)">${esc(e.message)}</p>`; }
+    return;
+  }
   if (state.itab === "evidence") {
     const f = run?.findings.find((x) => x.id === state.selFinding);
     body.innerHTML = f ? evidenceHtml(f) : `<p class="empty">Select a finding to see its evidence.</p>`;
@@ -336,7 +394,7 @@ function traceLines(lines, stageId) {
 
 // ------------------------------------------------------------------ run lifecycle
 
-function renderAll() { renderStatus(); renderMetrics(); renderFindings(); renderMap(); renderInspector(); }
+function renderAll() { renderStatus(); renderMetrics(); renderHistory(); renderFindings(); renderMap(); renderInspector(); }
 
 async function loadProvenance() {
   const run = state.run;
@@ -363,25 +421,43 @@ async function refreshRun() {
   } catch (e) { state.error = e.message; renderStatus(); }
 }
 
+/** Show a run (new, child or from the history); follow its progress if it is still compiling. */
+async function openRun(run_id) {
+  state.closeWatch?.();
+  Object.assign(state, { runId: run_id, run: null, progress: null, prov: null, selIdx: null, iopen: false, selLines: [], selFinding: null, cmp: null, cmpDiff: null });
+  state.openPasses.clear();
+  await refreshRuns();
+  await refreshRun();
+  if (state.run && (state.run.status === "queued" || state.run.status === "running")) {
+    state.busy = true; $("compile").disabled = true;
+    state.closeWatch = watchRun(run_id, (ev) => { state.progress = ev; renderStatus(); scheduleFetch(); }, async () => {
+      await refreshRun(); await refreshRuns(); renderAll();
+      state.busy = false; $("compile").disabled = false;
+    });
+  }
+}
+
+async function refreshRuns() { try { state.runs = await api.runs(); } catch { /* history is optional */ } }
+
 async function compile() {
   if (state.busy) return;
   const source = $("source").value;
-  state.busy = true; state.error = null; $("compile").disabled = true;
+  state.error = null;
   try {
     const sameAsTemplate = state.template && source === state.template.source;
     const { run_id } = await api.createRun({ source, template: sameAsTemplate ? state.template.name : null });
-    state.closeWatch?.();
-    Object.assign(state, { runId: run_id, run: null, progress: null, prov: null, selIdx: null, iopen: false, selLines: [], selFinding: null });
-    state.openPasses.clear();
     snapCache.clear();
-    await refreshRun();
-    state.closeWatch = watchRun(run_id, (ev) => { state.progress = ev; renderStatus(); scheduleFetch(); }, async () => {
-      await refreshRun();
-      state.busy = false; $("compile").disabled = false;
-    });
-  } catch (e) {
-    state.error = e.message; state.busy = false; $("compile").disabled = false; renderStatus();
-  }
+    await openRun(run_id);
+  } catch (e) { state.error = e.message; state.busy = false; $("compile").disabled = false; renderStatus(); }
+}
+
+async function applyFix(findingId) {
+  if (state.busy || !state.runId) return;
+  try {
+    const { run_id } = await api.applyFix(state.runId, findingId);
+    snapCache.clear();
+    await openRun(run_id);
+  } catch (e) { state.error = e.message; renderStatus(); }
 }
 
 // ------------------------------------------------------------------ setup
@@ -420,7 +496,22 @@ async function boot() {
   $("inspector-toggle").addEventListener("click", () => { state.iopen = !state.iopen; renderInspector(); });
   document.querySelectorAll("[data-itab]").forEach((b) => b.addEventListener("click", () => { state.itab = b.dataset.itab; state.iopen = true; renderInspector(); }));
 
-  $("findings-list").addEventListener("click", (e) => { const b = e.target.closest(".finding"); if (b) selectFinding(b.dataset.fid); });
+  $("findings-list").addEventListener("click", (e) => {
+    const fix = e.target.closest("[data-fix]"), open = e.target.closest("[data-open]");
+    if (fix) { e.stopPropagation(); applyFix(fix.dataset.fix); return; }
+    if (open) { e.stopPropagation(); openRun(open.dataset.open); return; }
+    const b = e.target.closest(".finding"); if (b) selectFinding(b.dataset.fid);
+  });
+  $("history").addEventListener("click", (e) => {
+    const cmpBtn = e.target.closest("[data-compare]"), run = e.target.closest("[data-run]");
+    if (cmpBtn) showCompare(cmpBtn.dataset.compare);
+    else if (run) { if (e.shiftKey) showCompare(run.dataset.run); else openRun(run.dataset.run); }
+  });
+  $("map").addEventListener("click", (e) => {
+    if (e.target.closest("[data-closecmp]")) { closeCompare(); return; }
+    const st = e.target.closest("[data-cmpstage]");
+    if (st) { state.cmpDiff = st.dataset.cmpstage; state.iopen = true; renderInspector(); }
+  });
   $("map").addEventListener("click", (e) => {
     const pass = e.target.closest(".pass");
     if (pass) { selectSnapshot(Number(pass.dataset.idx)); return; }
@@ -458,6 +549,8 @@ async function boot() {
     if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "]") { e.preventDefault(); moveStage(1); }
     if (e.key === "[") { e.preventDefault(); moveStage(-1); }
+    if (e.key === "f" && state.selFinding) { e.preventDefault(); applyFix(state.selFinding); }
+    if (e.key === "Escape" && state.cmp) { closeCompare(); return; }
     if (e.key === "Escape" && hasSel()) { state.selLines = []; state.selFinding = null; renderFindings(); renderMap(); renderInspector(); }
     if ((e.key === "j" || e.key === "k") && state.run?.findings?.length) {
       const fs = state.run.findings;

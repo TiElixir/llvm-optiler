@@ -29,7 +29,7 @@ FIXES: dict[str, Fix] = {
         patch=[
             PipelinePatchOp(op="remove", target="affine-loop-fusion"),
             PipelinePatchOp(op="insert_after", stage="linalg_tensor",
-                            value="transform-preload-library{transform-library-paths=" + TRANSFORM_PATH.format(fix_id="vectorize-reduction-loops") + "}"),
+                            value="transform-preload-library{transform-library-paths=" + TRANSFORM_PATH.replace("{fix_id}", "vectorize-reduction-loops") + "}"),
             PipelinePatchOp(op="insert_after", stage="linalg_tensor", value="transform-interpreter"),
         ],
         transform_script=INTERCHANGE_REDUCTION,

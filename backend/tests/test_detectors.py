@@ -64,3 +64,26 @@ def test_findings_are_ranked_by_estimated_impact(tmp_path, monkeypatch):
     run = job(tmp_path, monkeypatch, ROOT / "backend/templates/attention_block.py")
     ratios = [f.impact_est.ratio for f in run.findings]
     assert ratios == sorted(ratios, reverse=True) and "d3-unvectorized-hot-loop" in ids(run)
+
+
+def test_the_whole_loop_apply_the_top_finding_and_prove_it(tmp_path, monkeypatch):
+    """PLAN.md M6: on attention_block, applying the top finding gives a measurably faster child, finding verified."""
+    from backend.fixes.registry import FIXES
+    from backend.fixes.apply import apply_patch
+    from backend.pipeline.config import PipelineConfig
+    parent = job(tmp_path, monkeypatch, ROOT / "backend/templates/attention_block.py")
+    top = parent.findings[0]
+    assert top.id == "d3-unvectorized-hot-loop" and top.impact_verified is None
+    store = RunStore(tmp_path / "runs")
+    fix = FIXES[top.fix_ids[0]]
+    child = store.create(Run(id="", created_at="", source_code=parent.source_code, template=parent.template,
+                             pipeline_yaml=apply_patch(PipelineConfig.from_yaml(parent.pipeline_yaml), fix).to_yaml(),
+                             parent_id=parent.id, fix_id=fix.id, label=fix.label, settings=parent.settings))
+    run_job(store, child.id)
+    child = store.get(child.id)
+    assert child.status == "done" and child.metrics.correct, child.error
+    assert child.metrics.runtime_ms_median < parent.metrics.runtime_ms_median / 3
+    reread = store.get(parent.id)
+    f = next(f for f in reread.findings if f.id == top.id)
+    assert f.impact_verified.kind == "verified" and f.impact_verified.ratio > 3 and f.child_run_id == child.id
+    assert "est" == f.impact_est.kind and f.impact_verified.ratio > f.impact_est.ratio  # the estimate was conservative

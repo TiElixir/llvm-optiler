@@ -244,10 +244,9 @@ def test_run_json_uses_pass_alias(client, store):
     assert s["pass"] == "import" and "pass_name" not in s
 
 
-def test_apply_and_reproducer_not_implemented(client, store):
+def test_apply_validation_and_reproducer_not_implemented(client, store):
     run = fabricate(store, {}, [])
-    r = client.post(f"/api/runs/{run.id}/findings/f1/apply")
-    assert r.status_code == 501 and r.json() == {"detail": "not implemented yet"}
+    assert client.post(f"/api/runs/{run.id}/findings/f1/apply").status_code == 404   # no such finding
     r = client.get(f"/api/runs/{run.id}/reproducer")
     assert r.status_code == 501 and r.json() == {"detail": "not implemented yet"}
 
@@ -414,3 +413,26 @@ def test_e2e_stage_ops_links_and_coverage(e2e):
         prev_ids = {o["id"] for o in body["ops"]}
         assert all(o["source_lines"] == ([o["source_line"]] if o["source_line"] and len(o["source_lines"]) == 1
                                          else o["source_lines"]) for o in body["ops"])
+
+
+@pytest.mark.slow
+def test_e2e_apply_fix_creates_a_child_and_compare_shows_the_patch(e2e):
+    findings = e2e.client.get(f"/api/runs/{e2e.id}").json()["findings"]
+    f = next(f for f in findings if f["id"] == "d3-unvectorized-hot-loop")
+    assert e2e.client.post(f"/api/runs/{e2e.id}/findings/{f['id']}/apply", json={"fix_id": "nope"}).status_code == 422
+    r = e2e.client.post(f"/api/runs/{e2e.id}/findings/{f['id']}/apply")
+    assert r.status_code == 200
+    child_id = r.json()["run_id"]
+    child = e2e.client.get(f"/api/runs/{child_id}").json()
+    assert child["parent_id"] == e2e.id and child["fix_id"] == "vectorize-reduction-loops" and child["status"] == "queued"
+    assert "affine-loop-fusion" not in child["pipeline_yaml"] and "transform-interpreter" in child["pipeline_yaml"]
+    run_job(e2e.store, child_id)
+    cmp = e2e.client.get(f"/api/runs/{e2e.id}/compare", params={"other": child_id}).json()
+    assert cmp["a_metrics"]["correct"] and cmp["b_metrics"]["correct"]
+    assert cmp["b_metrics"]["runtime_ms_median"] < cmp["a_metrics"]["runtime_ms_median"]
+    assert "-" in cmp["config_diff"] and "affine-loop-fusion" in cmp["config_diff"] and "+" in cmp["config_diff"]
+    assert cmp["fix"]["id"] == "vectorize-reduction-loops"
+    assert [s["stage"] for s in cmp["stages"]][0] == "torch" and all(s["a_ops"] and s["b_ops"] for s in cmp["stages"])
+    parent = e2e.client.get(f"/api/runs/{e2e.id}").json()
+    done = next(f for f in parent["findings"] if f["id"] == f["id"] and f["id"] == "d3-unvectorized-hot-loop")
+    assert done["impact_verified"]["kind"] == "verified" and done["child_run_id"] == child_id

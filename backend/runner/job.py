@@ -16,6 +16,8 @@ from backend.pipeline.config import STAGES, PipelineConfig
 from backend.pipeline.llvm_steps import BuildError
 from backend.pipeline.mlir_runner import PipelineError, SnapshotRecord
 from backend.pipeline.run import compile_run
+from backend.fixes.apply import verdict
+from backend.fixes.registry import FIXES
 from backend.profile import perf, shares
 from backend.provenance.build import write_all
 from backend.schemas import FxNode, Metrics, ProgressEvent, Run, Snapshot, Stage
@@ -92,6 +94,21 @@ def analyze(store: RunStore, run: Run, out: dict) -> None:
     run.findings = find(run, out, stages, d)
 
 
+def record_verdict(store: RunStore, child: Run) -> None:
+    """A finished fix child proves or disproves its parent's finding with a measured verdict."""
+    if not (child.parent_id and child.fix_id):
+        return
+    try:
+        parent = store.get(child.parent_id)
+    except Exception:  # noqa: BLE001 - parent vanished: nothing to update
+        return
+    v = verdict(parent.metrics, child.metrics)
+    for f in parent.findings:
+        if child.fix_id in f.fix_ids:
+            f.impact_verified, f.child_run_id = v, child.id
+    store.save(parent)
+
+
 def find(run: Run, out: dict, stages, d) -> list:
     from backend.detectors import run_all
     from backend.detectors.base import Context
@@ -124,6 +141,10 @@ def run_job(store: RunStore, run_id: str) -> None:
             store.save(run)
 
     try:
+        fix = FIXES.get(run.fix_id) if run.fix_id else None
+        if fix and fix.transform_script:  # the patched pipeline refers to ${RUN_DIR}/transforms/<fix_id>.mlir
+            (d / "transforms").mkdir(exist_ok=True)
+            (d / "transforms" / f"{fix.id}.mlir").write_text(fix.transform_script)
         cfg = PipelineConfig.from_yaml(run.pipeline_yaml)
         parent_dir = None
         if run.parent_id:
@@ -147,6 +168,7 @@ def run_job(store: RunStore, run_id: str) -> None:
         analyze(store, run, out)
         run.status, run.phase, run.error = "done", "done", None
         store.save(run)
+        record_verdict(store, run)
         store.append_event(run_id, ProgressEvent(type="done", phase="done"))
     except Exception as e:  # noqa: BLE001 - every failure becomes a run error
         run.status, run.phase = "error", "error"

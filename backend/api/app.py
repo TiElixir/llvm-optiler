@@ -22,14 +22,25 @@ from sse_starlette.sse import EventSourceResponse
 
 from backend.pipeline.config import DEFAULT_PIPELINE, STAGES, PipelineConfig
 from backend.schemas import (
-    CreateRunRequest, CreateRunResponse, DiffResult, ProgressEvent, Run, RunSettings, RunSummary,
-    SnapshotText, StageOps, TemplateInfo, TemplateSource,
+    ApplyFixRequest, CompareResult, CompareStage, CreateRunRequest, CreateRunResponse, DiffResult, ProgressEvent, Run,
+    RunSettings, RunSummary, SnapshotText, StageOps, TemplateInfo, TemplateSource,
 )
+from backend.fixes.apply import apply_patch
+from backend.fixes.registry import FIXES
 from backend.provenance.build import read_stage
 from backend.store.runs import DEFAULT_RUNS_DIR, ROOT, RunNotFound, RunStore
 from backend.toolchain import toolchain_report
 
 FRONTEND_DIR = ROOT / "frontend"
+
+
+class RevalidatingStatic(StaticFiles):
+    """The UI is plain files that change between versions: make browsers revalidate instead of guessing."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
 TEMPLATES_DIR = ROOT / "backend" / "templates"
 EVENT_POLL_S = 0.2
@@ -272,10 +283,51 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
         return StageOps(stage=stage, snapshot_idx=max(idxs) if idxs else None,
                         ops=[], links=[], exact_lineage_pct=None)
 
-    @api.post("/runs/{run_id}/findings/{fid}/apply")
-    def apply_finding(run_id: str, fid: str):
-        # M6: create a child run from the finding's fix.
-        raise HTTPException(501, "not implemented yet")
+    @api.post("/runs/{run_id}/findings/{fid}/apply", response_model=CreateRunResponse)
+    def apply_finding(run_id: str, fid: str, body: ApplyFixRequest | None = None) -> CreateRunResponse:
+        """Apply a finding's fix: a new child run with the patched pipeline (the parent is never changed)."""
+        store = get_store()
+        parent = store.get(run_id)
+        finding = next((f for f in parent.findings if f.id == fid), None)
+        if finding is None:
+            raise HTTPException(404, f"run {run_id} has no finding {fid!r}")
+        fix_id = (body.fix_id if body and body.fix_id else None) or (finding.fix_ids[0] if finding.fix_ids else None)
+        if fix_id is None or fix_id not in finding.fix_ids:
+            raise HTTPException(422, "this finding has no automatic fix")
+        fix = FIXES[fix_id]
+        try:
+            patched = apply_patch(PipelineConfig.from_yaml(parent.pipeline_yaml), fix)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        child = store.create(Run(
+            id="", created_at="", source_code=parent.source_code, template=parent.template,
+            pipeline_yaml=patched.to_yaml(), parent_id=parent.id, fix_id=fix.id, label=fix.label,
+            settings=parent.settings))
+        return CreateRunResponse(run_id=child.id)
+
+    @api.get("/runs/{run_id}/compare", response_model=CompareResult)
+    def compare(run_id: str, other: str) -> CompareResult:
+        """Run vs run: metrics, op counts per stage and the pipeline config diff."""
+        store = get_store()
+        a, b = store.get(run_id), store.get(other)
+
+        def finals(r: Run) -> dict[str, tuple[int, int]]:
+            out: dict[str, tuple[int, int]] = {}
+            for s in r.snapshots:
+                if s.kind != "instrumentation":
+                    out[s.stage] = (s.idx, s.total_ops)
+            return out
+
+        fa, fb = finals(a), finals(b)
+        stages = [CompareStage(stage=s, a_snapshot_idx=fa.get(s, (None, None))[0], b_snapshot_idx=fb.get(s, (None, None))[0],
+                               a_ops=fa.get(s, (None, None))[1], b_ops=fb.get(s, (None, None))[1])
+                  for s in STAGES if s in fa or s in fb]
+        diff = "".join(difflib.unified_diff(a.pipeline_yaml.splitlines(True), b.pipeline_yaml.splitlines(True),
+                                            fromfile=f"{a.id} pipeline", tofile=f"{b.id} pipeline"))
+        child = b if b.parent_id == a.id else a if a.parent_id == b.id else None
+        summaries = {x.id: x for x in store.list()}
+        return CompareResult(a=summaries[a.id], b=summaries[b.id], a_metrics=a.metrics, b_metrics=b.metrics, stages=stages,
+                             config_diff=diff, fix=FIXES.get(child.fix_id) if child and child.fix_id else None)
 
     @api.get("/runs/{run_id}/reproducer")
     def reproducer(run_id: str):
@@ -298,7 +350,7 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
 
     app.include_router(api)
     if FRONTEND_DIR.is_dir():  # one process serves API and UI; mounted last so /api/* wins
-        app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+        app.mount("/", RevalidatingStatic(directory=FRONTEND_DIR, html=True), name="frontend")
     return app
 
 
