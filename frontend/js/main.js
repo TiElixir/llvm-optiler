@@ -2,6 +2,7 @@
 // walk the passes, inspect any snapshot.
 import { api, watchRun } from "./api.js";
 import { esc, fmtMs, pad3 } from "./format.js";
+import { evidenceLine, evidenceRows, findingLines, impactText, indexLabel, stepIndex } from "./findings.js";
 import { headlineModel } from "./headline.js";
 import { flavourForStage, renderCode } from "./ir.js";
 import { connectorPath, coverageText, groupHit, groupOps, groupShare, heatBucket, highlightTextLines, toggleSelection } from "./lineage.js";
@@ -13,6 +14,7 @@ const state = {
   templates: [], template: null, run: null, runId: null, progress: null, closeWatch: null,
   prov: null,               // { stage: StageOps } once the run is done
   selIdx: null, itab: "ir", iopen: false, busy: false, error: null,
+  selFinding: null,         // id of the selected finding
   selLines: [],             // source lines being traced
   openPasses: new Set(),    // stages whose pass list is expanded
 };
@@ -76,6 +78,37 @@ function renderMetrics() {
     }
     el.innerHTML = html;
   }
+}
+
+// ------------------------------------------------------------------ findings
+
+function renderFindings() {
+  const run = state.run;
+  const box = $("findings");
+  box.hidden = !run || run.status !== "done";
+  if (box.hidden) return;
+  const fs = run.findings ?? [];
+  $("findings-count").textContent = String(fs.length).padStart(2, "0");
+  $("findings-list").innerHTML = fs.length ? fs.map((f, i) => `<li><button class="finding${f.id === state.selFinding ? " sel" : ""}" data-fid="${esc(f.id)}"
+      aria-pressed="${f.id === state.selFinding}"><span class="fi">${indexLabel(i)}</span><span class="ft">${esc(f.title)}</span>
+      <span class="fv">${esc(impactText(f))}</span><span class="fe">${esc(evidenceLine(f))}</span></button></li>`).join("")
+    : `<li class="empty">no findings above threshold</li>`;
+}
+
+function selectFinding(id) {
+  const f = state.run?.findings.find((x) => x.id === id);
+  if (!f) return;
+  state.selFinding = id;
+  state.selLines = findingLines(f);
+  state.itab = "evidence";
+  state.iopen = true;
+  renderFindings(); renderMap(); renderInspector();
+}
+
+function evidenceHtml(f) {
+  const rows = evidenceRows(f).map(([k, kind, v]) => `<div class="ev"><span class="kicker">${esc(k.replaceAll("_", " "))}</span>${
+    kind === "text" ? `<p>${esc(v)}</p>` : kind === "code" ? `<pre>${esc(v.join("\n"))}</pre>` : `<ul>${v.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`}</div>`).join("");
+  return `<div class="evidence"><h3>${esc(f.title)}</h3><p class="sub">${esc(impactText(f))}${f.impact_est.note ? ` · ${esc(f.impact_est.note)}` : ""}${f.fix_ids.length ? ` · fix: ${esc(f.fix_ids.join(", "))}` : " · no automatic fix"}</p>${rows}</div>`;
 }
 
 // ------------------------------------------------------------------ pipeline map
@@ -250,8 +283,12 @@ async function renderInspector() {
     ? `${snap.stage} · ${pad3(snap.idx)} ${snap.pass}${snap.composite ? " · composite" : ""}${traced.length ? ` · ${traced.length} lines traced` : ""}` : "";
   body.hidden = !state.iopen;
   if (!state.iopen) return;
+  if (state.itab === "evidence") {
+    const f = run?.findings.find((x) => x.id === state.selFinding);
+    body.innerHTML = f ? evidenceHtml(f) : `<p class="empty">Select a finding to see its evidence.</p>`;
+    return;
+  }
   if (!snap) { body.innerHTML = `<p class="empty">Select a pass or an op in the pipeline map to see its IR.</p>`; return; }
-  if (state.itab === "evidence") { body.innerHTML = `<p class="empty">Evidence appears here when a finding is selected.</p>`; return; }
 
   const token = ++inspectorToken;
   body.innerHTML = `<p class="empty">loading…</p>`;
@@ -299,7 +336,7 @@ function traceLines(lines, stageId) {
 
 // ------------------------------------------------------------------ run lifecycle
 
-function renderAll() { renderStatus(); renderMetrics(); renderMap(); renderInspector(); }
+function renderAll() { renderStatus(); renderMetrics(); renderFindings(); renderMap(); renderInspector(); }
 
 async function loadProvenance() {
   const run = state.run;
@@ -334,7 +371,7 @@ async function compile() {
     const sameAsTemplate = state.template && source === state.template.source;
     const { run_id } = await api.createRun({ source, template: sameAsTemplate ? state.template.name : null });
     state.closeWatch?.();
-    Object.assign(state, { runId: run_id, run: null, progress: null, prov: null, selIdx: null, iopen: false, selLines: [] });
+    Object.assign(state, { runId: run_id, run: null, progress: null, prov: null, selIdx: null, iopen: false, selLines: [], selFinding: null });
     state.openPasses.clear();
     snapCache.clear();
     await refreshRun();
@@ -383,6 +420,7 @@ async function boot() {
   $("inspector-toggle").addEventListener("click", () => { state.iopen = !state.iopen; renderInspector(); });
   document.querySelectorAll("[data-itab]").forEach((b) => b.addEventListener("click", () => { state.itab = b.dataset.itab; state.iopen = true; renderInspector(); }));
 
+  $("findings-list").addEventListener("click", (e) => { const b = e.target.closest(".finding"); if (b) selectFinding(b.dataset.fid); });
   $("map").addEventListener("click", (e) => {
     const pass = e.target.closest(".pass");
     if (pass) { selectSnapshot(Number(pass.dataset.idx)); return; }
@@ -420,7 +458,11 @@ async function boot() {
     if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT" || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "]") { e.preventDefault(); moveStage(1); }
     if (e.key === "[") { e.preventDefault(); moveStage(-1); }
-    if (e.key === "Escape" && hasSel()) { state.selLines = []; renderMap(); renderInspector(); }
+    if (e.key === "Escape" && hasSel()) { state.selLines = []; state.selFinding = null; renderFindings(); renderMap(); renderInspector(); }
+    if ((e.key === "j" || e.key === "k") && state.run?.findings?.length) {
+      const fs = state.run.findings;
+      selectFinding(fs[stepIndex(fs.findIndex((f) => f.id === state.selFinding), e.key === "j" ? 1 : -1, fs.length)].id);
+    }
   });
   renderAll();
 }

@@ -147,3 +147,19 @@ button.src-line:hover .code { text-decoration: underline; text-decoration-color:
 .ir .gutter { white-space: normal; }
 .gl.heat { background: var(--h); padding: 2px 5px; color: var(--fg); }
 .gl.heat.est { background: transparent; border: 1px dashed var(--body); padding: 1px 4px; }
+
+/* findings */
+.findings { border-top: 1px solid var(--rule); max-height: 42%; display: flex; flex-direction: column; flex: none; }
+.findings-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
+.finding { display: grid; grid-template-columns: 28px 1fr auto; gap: 2px 10px; width: 100%; text-align: left; background: transparent; border: 0;
+  border-left: 2px solid transparent; border-bottom: 1px solid var(--rule); padding: 8px 16px; cursor: pointer; }
+.finding:hover { background: var(--bg-raised); } .finding.sel { border-left-color: var(--fg); background: var(--bg-raised); }
+.finding .fi { font: 11px var(--font-mono); color: var(--body); padding-top: 3px; }
+.finding .ft { color: var(--fg); font-size: 14px; line-height: 1.3; }
+.finding .fv { font: 11.5px var(--font-mono); color: var(--fg); white-space: nowrap; padding-top: 2px; }
+.finding .fe { grid-column: 2 / 4; font-size: 12.5px; color: var(--body); line-height: 1.4; }
+.findings-list .empty { padding: 12px 16px; }
+.evidence { padding: 12px 16px; max-width: 110ch; } .evidence h3 { margin: 0; font-size: 16px; font-weight: 400; color: var(--fg); }
+.evidence .sub { margin: 2px 0 12px; font: 12px var(--font-mono); color: var(--body); }
+.ev { margin-bottom: 10px; } .ev p, .ev ul { margin: 2px 0 0; font-size: 13px; } .ev ul { padding-left: 16px; }
+.ev pre { margin: 2px 0 0; font: 12px/1.5 var(--font-mono); color: var(--fg); overflow: auto; }

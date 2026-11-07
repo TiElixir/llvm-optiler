@@ -110,10 +110,13 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
                                      run_dir / rec.path)
         try:  # the cost model needs the live module (it keeps changing after this stage)
             from backend.profile import cost
+            from backend.detectors.base import collect_copy_info, collect_linalg_info
             if stage == "linalg_tensor":
                 costs["ops"] = cost.compute_costs(mod)
+                costs["linalg"] = collect_linalg_info(mod)
             elif stage == "linalg_buffer":
                 costs["static_alloc"] = cost.static_alloc_summary(mod)
+                costs["copies"] = collect_copy_info(mod)
         except Exception as e:  # noqa: BLE001 - estimates are optional, never fail a compile
             costs.setdefault("error", f"{type(e).__name__}: {e}")
 

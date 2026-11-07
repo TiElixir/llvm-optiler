@@ -29,6 +29,10 @@
     <aside class="panel left" aria-label="Model source">
       <div class="panel-head"><span class="kicker">source</span><span class="kicker">defines model, inputs</span></div>
       <textarea id="source" spellcheck="false" aria-label="PyTorch model source" wrap="off"></textarea>
+      <section id="findings" class="findings" aria-label="Findings" hidden>
+        <div class="panel-head"><span class="kicker">findings</span><span id="findings-count" class="kicker"></span></div>
+        <ol id="findings-list" class="findings-list"></ol>
+      </section>
     </aside>
 
     <section class="panel map" aria-label="Pipeline map">

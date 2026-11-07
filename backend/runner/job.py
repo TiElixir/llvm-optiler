@@ -84,11 +84,28 @@ def analyze(store: RunStore, run: Run, out: dict) -> None:
             notice = f"{notice + '; ' if notice else ''}estimate failed ({type(e).__name__}: {e})"
         if result is not None:
             notice = (notice or "perf not used") + "; shares are static estimates (FLOPs and bytes per op)"
-    if result is None:
+    if result is not None:
+        shares.fill_metrics(run.metrics, result, kind, run.fx_nodes, notice)
+        write_all(d, stages)
+    else:
         run.metrics.attribution_notice = notice or "no runtime attribution available"
-        return
-    shares.fill_metrics(run.metrics, result, kind, run.fx_nodes, notice)
-    write_all(d, stages)
+    run.findings = find(run, out, stages, d)
+
+
+def find(run: Run, out: dict, stages, d) -> list:
+    from backend.detectors import run_all
+    from backend.detectors.base import Context
+    from backend.profile import calibrate
+    from backend.toolchain import vector_isa
+    try:
+        calib = calibrate.load_or_run()
+    except Exception:  # noqa: BLE001 - detectors fall back to a default bandwidth
+        calib = {}
+    costs = out.get("costs") or {}
+    ctx = Context(run_dir=d, stages=stages, metrics=run.metrics, fx_nodes=run.fx_nodes, pipeline_yaml=run.pipeline_yaml,
+                  linalg=costs.get("linalg") or [], copies=costs.get("copies") or [], calib=calib,
+                  lanes=vector_isa()["f32_lanes"])
+    return run_all(ctx)
 
 
 def run_job(store: RunStore, run_id: str) -> None:
