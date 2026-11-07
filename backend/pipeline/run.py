@@ -131,6 +131,7 @@ def compile_run(run_dir: Path, config: PipelineConfig, *, source: str | None = N
     build: BuildResult = build_native(run_dir, tail.llvm_ir, len(records),
                                       on_step=lambda s: emit("build", step=s))
     records += build.records
+    (run_dir / "reports" / "build_commands.json").write_text(json.dumps(build.commands))
 
     # provenance: source lines -> every stage -> LLVM IR -> assembly
     emit("provenance")

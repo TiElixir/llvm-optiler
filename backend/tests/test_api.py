@@ -244,11 +244,10 @@ def test_run_json_uses_pass_alias(client, store):
     assert s["pass"] == "import" and "pass_name" not in s
 
 
-def test_apply_validation_and_reproducer_not_implemented(client, store):
-    run = fabricate(store, {}, [])
+def test_apply_validation_and_reproducer_needs_a_finished_run(client, store):
+    run = fabricate(store, {}, [], status="running")
     assert client.post(f"/api/runs/{run.id}/findings/f1/apply").status_code == 404   # no such finding
-    r = client.get(f"/api/runs/{run.id}/reproducer")
-    assert r.status_code == 501 and r.json() == {"detail": "not implemented yet"}
+    assert client.get(f"/api/runs/{run.id}/reproducer").status_code == 409
 
 
 # ------------------------------------------------------------------ SSE
@@ -436,3 +435,30 @@ def test_e2e_apply_fix_creates_a_child_and_compare_shows_the_patch(e2e):
     parent = e2e.client.get(f"/api/runs/{e2e.id}").json()
     done = next(f for f in parent["findings"] if f["id"] == f["id"] and f["id"] == "d3-unvectorized-hot-loop")
     assert done["impact_verified"]["kind"] == "verified" and done["child_run_id"] == child_id
+
+
+def test_unknown_pass_is_rejected_before_queueing_and_transform_script_is_kept(client):
+    bad = "- stage: torch\n  passes:\n    - not-a-real-pass\n"
+    r = client.post("/api/runs", json={"template": "matmul_relu", "pipeline_yaml": bad})
+    assert r.status_code == 422 and "not-a-real-pass" in r.json()["detail"]
+    good = "- stage: torch\n  passes:\n    - canonicalize\n"
+    r = client.post("/api/runs", json={"template": "matmul_relu", "pipeline_yaml": good, "transform_script": "module {}"})
+    assert r.status_code == 200
+    assert client.get(f"/api/runs/{r.json()['run_id']}").json()["transform_script"] == "module {}"
+
+
+@pytest.mark.slow
+def test_e2e_reproducer_zip_replays_the_mlir_passes(e2e, tmp_path):
+    import io, subprocess, sys, zipfile
+    r = e2e.client.get(f"/api/runs/{e2e.id}/reproducer")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    names = set(z.namelist())
+    assert {"model.py", "import.mlir", "pipeline.yaml", "passes.json", "mlir_passes.py", "repro.sh", "toolchain.json", "optiler_rt.c"} <= names
+    z.extractall(tmp_path)
+    sh = (tmp_path / "repro.sh").read_text()
+    assert "opt " in sh and "llc " in sh and "-shared" in sh and "objdump" in sh and str(e2e.store.root) not in sh
+    out = subprocess.run([sys.executable, "-P", "mlir_passes.py"], cwd=tmp_path, capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr[-800:]
+    ll = (tmp_path / "model.ll").read_text()
+    assert "define" in ll and "_mlir_ciface_forward" in ll

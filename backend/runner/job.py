@@ -145,6 +145,9 @@ def run_job(store: RunStore, run_id: str) -> None:
         if fix and fix.transform_script:  # the patched pipeline refers to ${RUN_DIR}/transforms/<fix_id>.mlir
             (d / "transforms").mkdir(exist_ok=True)
             (d / "transforms" / f"{fix.id}.mlir").write_text(fix.transform_script)
+        if run.transform_script:
+            (d / "transforms").mkdir(exist_ok=True)
+            (d / "transforms" / "user.mlir").write_text(run.transform_script)
         cfg = PipelineConfig.from_yaml(run.pipeline_yaml)
         parent_dir = None
         if run.parent_id:

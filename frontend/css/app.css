@@ -181,3 +181,19 @@ button.src-line:hover .code { text-decoration: underline; text-decoration-color:
 .compare th, .compare td { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var(--rule); font-weight: 400; color: var(--fg); font-variant-numeric: tabular-nums; }
 .compare th { color: var(--body); } .compare td:last-child { color: var(--body); } .compare .diff { margin: 4px 0 14px; max-height: 160px; overflow: auto; border: 1px solid var(--rule); }
 .compare .kicker { display: block; margin: 10px 0 4px; }
+
+/* advanced drawer */
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100vw); background: var(--bg); border-left: 1px solid var(--rule); display: flex; flex-direction: column; z-index: 5; }
+.drawer-head { display: flex; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--rule); }
+.drawer-body { overflow: auto; padding: 0 16px 24px; }
+.drawer section { padding: 14px 0; border-bottom: 1px solid var(--rule); } .drawer h3 { margin: 0 0 8px; font-weight: 400; }
+.settings { display: flex; gap: 14px; flex-wrap: wrap; } .settings label { font: 11px var(--font-mono); letter-spacing: var(--kicker-tracking); text-transform: uppercase; color: var(--body); display: flex; flex-direction: column; gap: 4px; }
+.settings input { width: 92px; background: var(--bg); color: var(--fg); border: 1px solid var(--rule); padding: 4px 6px; font: 13px var(--font-mono); }
+.note2 { margin: 8px 0 0; font-size: 12.5px; color: var(--body); } .note2.err { color: var(--error); min-height: 1em; }
+.drawer textarea { width: 100%; min-height: 170px; background: transparent; color: var(--fg); border: 1px solid var(--rule); padding: 8px; font: 12px/1.5 var(--font-mono); white-space: pre; tab-size: 2; margin-bottom: 10px; resize: vertical; }
+#transform { min-height: 90px; }
+.drawer .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.drawer button#compile-pipeline { color: var(--fg); border-color: var(--fg); background: transparent; padding: 5px 10px; cursor: pointer; font: 11px var(--font-mono); letter-spacing: var(--kicker-tracking); text-transform: uppercase; }
+.pass-table { max-height: 260px; overflow: auto; border: 1px solid var(--rule); } .pass-table table { width: 100%; border-collapse: collapse; font: 12px var(--font-mono); }
+.pass-table td { padding: 2px 8px; border-bottom: 1px solid var(--rule); color: var(--body); white-space: nowrap; } .pass-table tr { cursor: pointer; } .pass-table tr:hover td { color: var(--fg); }
+.pass-table td.slow { color: var(--fg); } .pass-table td.num { text-align: right; font-variant-numeric: tabular-nums; }

@@ -16,15 +16,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from backend.pipeline.config import DEFAULT_PIPELINE, STAGES, PipelineConfig
+from backend.pipeline.validate import check_text
 from backend.schemas import (
     ApplyFixRequest, CompareResult, CompareStage, CreateRunRequest, CreateRunResponse, DiffResult, ProgressEvent, Run,
     RunSettings, RunSummary, SnapshotText, StageOps, TemplateInfo, TemplateSource,
 )
+from backend.api.reproducer import build_reproducer
 from backend.fixes.apply import apply_patch
 from backend.fixes.registry import FIXES
 from backend.provenance.build import read_stage
@@ -177,6 +179,10 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
             PipelineConfig.from_yaml(pipeline_yaml)
         except Exception as e:  # noqa: BLE001 - yaml, key, type and pydantic errors all mean "bad pipeline"
             raise HTTPException(422, f"invalid pipeline: {type(e).__name__}: {e}") from e
+        if req.pipeline_yaml:  # Rule 1: unknown passes are rejected before anything is queued
+            bad = check_text(pipeline_yaml)
+            if bad:
+                raise HTTPException(422, "unknown pass: " + "; ".join(f"[{s}] {p}: {err}" for s, p, err in bad[:3]))
 
         settings = RunSettings()
         if req.iters is not None:
@@ -194,7 +200,7 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
             label=req.label or req.template or "",
             source_code=source,
             template=req.template or (parent.template if parent and from_parent else None),
-            pipeline_yaml=pipeline_yaml, settings=settings)
+            pipeline_yaml=pipeline_yaml, settings=settings, transform_script=req.transform_script or None)
         return CreateRunResponse(run_id=store.create(run).id)
 
     @api.get("/runs", response_model=list[RunSummary])
@@ -330,9 +336,13 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
                              config_diff=diff, fix=FIXES.get(child.fix_id) if child and child.fix_id else None)
 
     @api.get("/runs/{run_id}/reproducer")
-    def reproducer(run_id: str):
-        # M7: zip of source, pipeline, snapshots and reports.
-        raise HTTPException(501, "not implemented yet")
+    def reproducer(run_id: str) -> Response:
+        store = get_store()
+        run = store.get(run_id)
+        if run.status != "done":
+            raise HTTPException(409, "the run has not finished")
+        return Response(build_reproducer(run, store.run_dir(run_id)), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="optiler-{run_id}.zip"'})
 
     # -------------------------------------------------------------- templates, toolchain
     @api.get("/templates", response_model=list[TemplateInfo])
@@ -343,6 +353,10 @@ def create_app(runs_dir: Path | str | None = None, start_worker: bool = True) ->
     @api.get("/templates/{name}", response_model=TemplateSource)
     def get_template(name: str) -> TemplateSource:
         return TemplateSource(name=name, source=_template_path(name).read_text())
+
+    @api.get("/pipeline")
+    def default_pipeline() -> dict:
+        return {"yaml": DEFAULT_PIPELINE.read_text()}
 
     @api.get("/toolchain")
     def get_toolchain() -> dict:

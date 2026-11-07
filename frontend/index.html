@@ -21,6 +21,7 @@
     <span id="status" class="status" role="status" aria-live="polite"></span>
     <span class="spacer"></span>
     <span id="toolchain" class="kicker"></span>
+    <button id="advanced" type="button" aria-expanded="false" aria-controls="drawer" class="link">advanced</button>
   </header>
 
   <section id="metrics" class="metrics" aria-label="Result" hidden></section>
@@ -54,6 +55,40 @@
     </div>
     <div id="inspector-body" class="inspector-body" hidden></div>
   </section>
+
+  <aside id="drawer" class="drawer" aria-label="Advanced" hidden>
+    <div class="drawer-head"><span class="kicker">advanced</span><button id="drawer-close" class="linkbtn" type="button">close</button></div>
+    <div class="drawer-body">
+      <section>
+        <h3 class="kicker">settings</h3>
+        <div class="settings">
+          <label>iterations <input id="set-iters" type="number" min="1" max="10000" value="100"></label>
+          <label>warmup <input id="set-warmup" type="number" min="0" max="1000" value="10"></label>
+          <label>threads <input id="set-threads" type="number" min="1" max="256" value="1"></label>
+        </div>
+        <p class="note2">Applied to the next compile. Compiled code is single-threaded; threads only sets PyTorch eager's thread count, and the result bar always states it.</p>
+      </section>
+      <section>
+        <h3 class="kicker">pipeline (yaml)</h3>
+        <textarea id="pipeline" spellcheck="false" wrap="off" aria-label="Pipeline config"></textarea>
+        <h3 class="kicker">transform script (optional)</h3>
+        <textarea id="transform" spellcheck="false" wrap="off" aria-label="Transform dialect script" placeholder="module attributes {transform.with_named_sequence} { ... }"></textarea>
+        <div class="row">
+          <button id="attach" type="button" class="linkbtn">attach to pipeline</button>
+          <button id="compile-pipeline" type="button">compile with this pipeline</button>
+        </div>
+        <p id="pipeline-error" class="note2 err" role="alert"></p>
+      </section>
+      <section>
+        <h3 class="kicker">passes · <span id="pass-count"></span></h3>
+        <div id="pass-table" class="pass-table"></div>
+      </section>
+      <section>
+        <h3 class="kicker">export</h3>
+        <a id="repro" class="linkbtn" href="#" download>download reproducer (.zip)</a>
+      </section>
+    </div>
+  </aside>
 
   <script type="module" src="js/main.js"></script>
 </body>

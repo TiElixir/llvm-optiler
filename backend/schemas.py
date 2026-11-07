@@ -158,6 +158,7 @@ class Run(BaseModel):
     created_at: str
     label: str = ""
     source_code: str
+    transform_script: Optional[str] = None   # user transform-dialect script, written to transforms/user.mlir
     template: Optional[str] = None
     inputs_spec: list[dict[str, Any]] = []
     output_spec: Optional[dict[str, Any]] = None
@@ -197,6 +198,7 @@ class CreateRunRequest(BaseModel):
     parent_id: Optional[str] = None
     fix_id: Optional[str] = None
     label: Optional[str] = None
+    transform_script: Optional[str] = None
     iters: Optional[int] = None
     warmup: Optional[int] = None
     threads: Optional[int] = None

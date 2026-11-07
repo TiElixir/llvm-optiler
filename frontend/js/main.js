@@ -2,6 +2,7 @@
 // walk the passes, inspect any snapshot.
 import { api, watchRun } from "./api.js";
 import { esc, fmtMs, pad3 } from "./format.js";
+import { attachTransform, passRows, readSettings } from "./drawer.js";
 import { evidenceLine, evidenceRows, findingLines, impactText, indexLabel, stepIndex } from "./findings.js";
 import { headlineModel } from "./headline.js";
 import { compareRows, runLabel, treeOf } from "./history.js";
@@ -394,7 +395,7 @@ function traceLines(lines, stageId) {
 
 // ------------------------------------------------------------------ run lifecycle
 
-function renderAll() { renderStatus(); renderMetrics(); renderHistory(); renderFindings(); renderMap(); renderInspector(); }
+function renderAll() { renderStatus(); renderMetrics(); renderHistory(); renderFindings(); renderMap(); renderInspector(); if (!$("drawer").hidden) renderDrawer(); }
 
 async function loadProvenance() {
   const run = state.run;
@@ -445,10 +446,50 @@ async function compile() {
   state.error = null;
   try {
     const sameAsTemplate = state.template && source === state.template.source;
-    const { run_id } = await api.createRun({ source, template: sameAsTemplate ? state.template.name : null });
+    const s = readSettings({ iters: $("set-iters").value, warmup: $("set-warmup").value, threads: $("set-threads").value });
+    if (!s.ok) { state.error = s.error; renderStatus(); return; }
+    const { run_id } = await api.createRun({ source, template: sameAsTemplate ? state.template.name : null, ...s.values });
     snapCache.clear();
     await openRun(run_id);
   } catch (e) { state.error = e.message; state.busy = false; $("compile").disabled = false; renderStatus(); }
+}
+
+// ------------------------------------------------------------------ advanced drawer
+
+function renderDrawer() {
+  const run = state.run;
+  $("pass-count").textContent = run ? String(run.snapshots.length) : "0";
+  $("repro").hidden = !run || run.status !== "done";
+  if (run) $("repro").href = `/api/runs/${run.id}/reproducer`;
+  $("pass-table").innerHTML = run?.snapshots.length
+    ? `<table><tbody>${passRows(run.snapshots).map((r) => `<tr data-idx="${r.idx}"><td class="num">${r.idx}</td><td>${esc(r.stage)}</td><td class="${r.slow ? "slow" : ""}">${esc(r.pass)}${r.changed ? " ·" : ""}</td><td class="num${r.slow ? " slow" : ""}">${fmtMs(r.ms)} ms</td></tr>`).join("")}</tbody></table>`
+    : `<p class="note2">No run yet.</p>`;
+}
+
+async function openDrawer() {
+  $("drawer").hidden = false;
+  $("advanced").setAttribute("aria-expanded", "true");
+  if (!$("pipeline").value) {
+    try { $("pipeline").value = state.run?.pipeline_yaml || (await (await fetch("/api/pipeline")).json()).yaml; } catch { /* leave empty */ }
+  }
+  renderDrawer();
+}
+function closeDrawer() { $("drawer").hidden = true; $("advanced").setAttribute("aria-expanded", "false"); }
+
+async function compilePipeline() {
+  if (state.busy) return;
+  $("pipeline-error").textContent = "";
+  const s = readSettings({ iters: $("set-iters").value, warmup: $("set-warmup").value, threads: $("set-threads").value });
+  if (!s.ok) { $("pipeline-error").textContent = s.error; return; }
+  try {
+    const { run_id } = await api.createRun({
+      source: $("source").value, pipeline_yaml: $("pipeline").value, transform_script: $("transform").value.trim() || null,
+      parent_id: state.runId, label: "edited pipeline", ...s.values,
+    });
+    snapCache.clear();
+    closeDrawer();
+    await openRun(run_id);
+  } catch (e) { $("pipeline-error").textContent = e.message; }
 }
 
 async function applyFix(findingId) {
@@ -493,6 +534,11 @@ async function boot() {
 
   $("template").addEventListener("change", (e) => loadTemplate(e.target.value).catch((err) => { state.error = err.message; renderStatus(); }));
   $("compile").addEventListener("click", compile);
+  $("advanced").addEventListener("click", () => ($("drawer").hidden ? openDrawer() : closeDrawer()));
+  $("drawer-close").addEventListener("click", closeDrawer);
+  $("compile-pipeline").addEventListener("click", compilePipeline);
+  $("attach").addEventListener("click", () => { $("pipeline").value = attachTransform($("pipeline").value); });
+  $("pass-table").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-idx]"); if (tr) { closeDrawer(); selectSnapshot(Number(tr.dataset.idx)); } });
   $("inspector-toggle").addEventListener("click", () => { state.iopen = !state.iopen; renderInspector(); });
   document.querySelectorAll("[data-itab]").forEach((b) => b.addEventListener("click", () => { state.itab = b.dataset.itab; state.iopen = true; renderInspector(); }));
 
@@ -550,6 +596,7 @@ async function boot() {
     if (e.key === "]") { e.preventDefault(); moveStage(1); }
     if (e.key === "[") { e.preventDefault(); moveStage(-1); }
     if (e.key === "f" && state.selFinding) { e.preventDefault(); applyFix(state.selFinding); }
+    if (e.key === "Escape" && !$("drawer").hidden) { closeDrawer(); return; }
     if (e.key === "Escape" && state.cmp) { closeCompare(); return; }
     if (e.key === "Escape" && hasSel()) { state.selLines = []; state.selFinding = null; renderFindings(); renderMap(); renderInspector(); }
     if ((e.key === "j" || e.key === "k") && state.run?.findings?.length) {
